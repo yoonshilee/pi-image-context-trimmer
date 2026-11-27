@@ -147,3 +147,15 @@ test("configuration validates display mode and enable flag", async t => {
   await writeFile(file, '{"display":"live"}');
   assert.throws(() => readTrimConfig(file), /display must be summary or off/);
 });
+
+test("a new attachment of a historical image remains visible without an explicit recall", async t => {
+  const { session, bodies, entries } = await setup(t);
+  await session.prompt("First inspection", { images: [image] });
+  await session.prompt("Inspect the same original again", { images: [image] });
+  assert.deepEqual(bodies.map(imageCount), [1, 1]);
+  assert.equal(entries().at(-1)!.data.stats.imageBlocks, 2);
+  assert.equal(entries().at(-1)!.data.stats.omittedImages, 1);
+  assert.equal(entries().at(-1)!.data.stats.recallAttempts, 0);
+  await session.prompt("Continue without images");
+  assert.deepEqual(bodies.map(imageCount), [1, 1, 0]);
+});

@@ -32,7 +32,6 @@ const answer = (round: number): Step => ({ answer: JSON.stringify(corpus.rounds[
 
 async function run(t: TestContext, trimmed: boolean, limit?: number) {
   const steps: Step[] = [search({ lot: "A17", kind: "order" }), read("doc-201"), search({ lot: "A17", reference: "4831" }), read("doc-201"),
-    ...(trimmed ? [{ tool: RECALL_TOOL, args: { id: imageId(images.get("doc-201")!) } }] : []),
     read("doc-317"), search({ lot: "A17", reference: "7294" }), read("doc-509"), answer(0), answer(1),
     ...(trimmed ? [{ tool: RECALL_TOOL, args: { id: imageId(images.get("doc-509")!) } }] : []), answer(2), search({ lot: "A17", kind: "adjustment" }), read("doc-624"), answer(3)];
   const sentImages: string[][] = [];
@@ -90,13 +89,13 @@ async function run(t: TestContext, trimmed: boolean, limit?: number) {
   return { sentImages, totalBytes, trace };
 }
 
-test("real Pi SDK trims within a tool loop, deduplicates repeated reads and retains explicit recalls for the task", async t => {
+test("real Pi SDK preserves linked visual evidence, deduplicates repeated reads and trims completed tasks", async t => {
   const baseline = await run(t, false);
   const trimmed = await run(t, true);
   assert.deepEqual(baseline.trace, trimmed.trace);
   assert.deepEqual(baseline.trace.filter(event => event.tool === "read_record").flatMap(event => event.records), ["doc-201", "doc-201", "doc-317", "doc-509", "doc-624"]);
   assert.deepEqual(baseline.sentImages.map(items => items.length), [0, 0, 1, 1, 2, 3, 3, 4, 4, 4, 4, 4, 5]);
-  assert.deepEqual(trimmed.sentImages, [[], [], ["doc-201"], [], [], ["doc-201"], ["doc-201", "doc-317"], ["doc-201"], ["doc-201", "doc-509"], [], [], ["doc-509"], [], [], ["doc-624"]]);
+  assert.deepEqual(trimmed.sentImages, [[], [], ["doc-201"], ["doc-201"], ["doc-201"], ["doc-201", "doc-317"], ["doc-201", "doc-317"], ["doc-201", "doc-317", "doc-509"], [], [], ["doc-509"], [], [], ["doc-624"]]);
   assert(trimmed.totalBytes < baseline.totalBytes);
   console.log(`Retrieval local HTTP: baseline ${baseline.totalBytes} B / ${baseline.sentImages.flat().length} image blocks; trimmed ${trimmed.totalBytes} B / ${trimmed.sentImages.flat().length} image blocks.`);
 });

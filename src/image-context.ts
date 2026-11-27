@@ -40,17 +40,31 @@ export function supportsProjection(model: { api: string; baseUrl: string; compat
   return model.api === "openai-completions" || model.api === "openai-responses" || (model.api === "openai-codex-responses" && codexTransport === "sse");
 }
 
-export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean) {
-  let processedThrough = -1;
+/** Index original session blocks so Pi's request-time clones reuse their cached hashes. */
+export function indexSourceImages(messages: readonly AgentMessage[]) {
+  const images = new Map<string, Map<string, ImageContent>>();
+  for (const message of messages) {
+    for (const block of imageBlocks(message) ?? []) {
+      if (block.type !== "image") continue;
+      let byData = images.get(block.mimeType);
+      if (!byData) images.set(block.mimeType, byData = new Map());
+      if (!byData.has(block.data)) byData.set(block.data, block);
+    }
+  }
+  return (image: ImageContent): string | undefined => {
+    const source = images.get(image.mimeType)?.get(image.data);
+    return source ? imageId(source) : undefined;
+  };
+}
+
+export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean, identify: (image: ImageContent) => string | undefined = imageId) {
   let completedThrough = -1;
   let pendingStop = -1;
-  // A successful response acknowledges its input images, including during tool loops.
+  // Tool calls do not prove the model has finished using the visual evidence.
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
-    if (message.role === "assistant") {
-      if (message.stopReason === "stop" || message.stopReason === "toolUse") processedThrough = i;
-      pendingStop = message.stopReason === "stop" ? i : -1;
-    } else if (message.role === "user") {
+    if (message.role === "assistant") pendingStop = message.stopReason === "stop" ? i : -1;
+    else if (message.role === "user") {
       if (pendingStop !== -1) completedThrough = pendingStop;
       pendingStop = -1;
     }
@@ -58,7 +72,6 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
   let omittedImages = 0;
   let omittedBase64Bytes = 0;
   const result = messages.slice();
-  const processedImages = new Set<string>();
   const includedImages = new Set<string>();
 
   for (let i = 0; i < messages.length; i++) {
@@ -67,19 +80,16 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
     if (!Array.isArray(message.content)) continue;
     const content = message.content.map(block => {
       if (block.type !== "image") return block;
-      const id = imageId(block);
-      const processed = i < processedThrough;
-      if (processed) processedImages.add(id);
-      const recalled = message.role === "toolResult" && message.toolName === RECALL_TOOL;
-      // Explicit recalls accumulate evidence for the active task instead of forcing repeated recall loops.
-      const pinned = recalled && i > completedThrough;
-      if (!includedImages.has(id) && (pinned || (!processed && (!processedImages.has(id) || recalled)))) {
+      const id = identify(block);
+      if (!id) return block;
+      const active = i > completedThrough;
+      if (active && !includedImages.has(id)) {
         includedImages.add(id);
         return block;
       }
-      const text = includedImages.has(id)
-        ? `[Image reference ${id}. Identical image is already included earlier in this request.]`
-        : `[Image reference ${id}. Previously provided or available elsewhere in this request. Use ${RECALL_TOOL} with this ID if exact visual details are needed.]`;
+      const text = active
+        ? `[Image reference ${id}. Already included earlier.]`
+        : `[Image reference ${id}. Use ${RECALL_TOOL} if needed.]`;
       if (block.data.length <= text.length || !recoverable(id)) return block;
       omittedImages++;
       omittedBase64Bytes += block.data.length;

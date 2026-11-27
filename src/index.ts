@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { findImage, imageId, projectImages, RECALL_TOOL, supportsProjection } from "./image-context.ts";
+import { findImage, indexSourceImages, projectImages, RECALL_TOOL, supportsProjection } from "./image-context.ts";
 import { defaultConfig, emptyStatistics, measureProjection, readTrimConfig, recordProjection, renderStatistics, STATS_ENTRY, type BypassReason, type StatsEntryData, type TrimStatistics } from "./statistics.ts";
 
 export default function imageContext(pi: ExtensionAPI, options: { codexTransport?: "sse"; configPath?: string } = {}): void {
@@ -52,7 +52,7 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
   pi.registerTool({
     name: RECALL_TOOL,
     label: "Recall context image",
-    description: "Read an original image from the current conversation by its image-reference ID. Ordinary images become references after a successful model response, including within a tool loop. Call this when a reference lacks the visual detail needed for your answer. Recalled images remain visible together until the current user task finishes.",
+    description: "Read an original image from the current conversation by its image-reference ID. Completed tasks retain references to their images. Use this tool only when exact visual details are needed and not already visible. Distinct images stay available throughout the current user task.",
     parameters: Type.Object({ id: Type.String({ description: "The exact 64-character image reference ID.", pattern: "^[a-f0-9]{64}$" }) }),
     async execute(_toolCallId, { id }, _signal, _onUpdate, ctx) {
       forStats(stats => { stats.recallAttempts++; });
@@ -71,20 +71,11 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
       forStats(stats => recordProjection(stats, metrics, bypass));
       return;
     }
-    // Build the source index only when there is an image to replace.
-    let available: Set<string> | undefined;
-    const projected = projectImages(event.messages, id => {
-      if (!available) {
-        available = new Set<string>();
-        for (const entry of ctx.sessionManager.getBranch()) {
-          if (entry.type !== "message") continue;
-          const message = entry.message;
-          if ((message.role === "user" || message.role === "toolResult") && Array.isArray(message.content)) {
-            for (const block of message.content) if (block.type === "image") available.add(imageId(block));
-          }
-        }
-      }
-      return available.has(id);
+    // The request context is cloned by Pi; only exact matches on the current branch are recoverable.
+    let lookup: ReturnType<typeof indexSourceImages> | undefined;
+    const projected = projectImages(event.messages, () => true, block => {
+      lookup ??= indexSourceImages(ctx.sessionManager.getBranch().flatMap(entry => entry.type === "message" ? [entry.message] : []));
+      return lookup(block);
     });
     const metrics = measureProjection(event.messages, projected);
     forStats(stats => recordProjection(stats, metrics));
