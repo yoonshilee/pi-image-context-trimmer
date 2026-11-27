@@ -14,8 +14,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
-    "check": "npm run typecheck && npm test",
-    "benchmark:paid": "node benchmark/run-paid.ts"
+    "check": "npm run typecheck && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -49,9 +48,7 @@
   ],
   "files": [
     "src",
-    "README_zh.md",
-    "benchmark/results/paid-comparison.svg",
-    "benchmark/results/paid-comparison_zh.svg"
+    "README_zh.md"
   ],
   "publishConfig": {
     "access": "public",

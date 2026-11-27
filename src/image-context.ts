@@ -29,7 +29,17 @@ export function supportsProjection(api: string, codexTransport?: "sse"): boolean
 }
 
 export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean) {
-  let seenResponse = false;
+  let completedThrough = -1;
+  let pendingStop = -1;
+  // A later user message closes the preceding successful turn; tool calls and continuations do not.
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    if (message.role === "assistant") pendingStop = message.stopReason === "stop" ? i : -1;
+    else if (message.role === "user") {
+      if (pendingStop !== -1) completedThrough = pendingStop;
+      pendingStop = -1;
+    }
+  }
   let omittedImages = 0;
   let omittedBase64Bytes = 0;
   const result = messages.slice();
@@ -37,15 +47,12 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
-    if (message.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "toolUse")) {
-      seenResponse = true;
-    }
     if (message.role !== "user" && message.role !== "toolResult") continue;
     if (!Array.isArray(message.content)) continue;
     const content = message.content.map(block => {
       if (block.type !== "image") return block;
       const id = imageId(block);
-      if (!seenResponse && !fresh.has(id)) {
+      if (i > completedThrough && !fresh.has(id)) {
         fresh.add(id);
         return block;
       }

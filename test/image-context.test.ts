@@ -8,7 +8,10 @@ const image: ImageContent = { type: "image", mimeType: "image/png", data: Buffer
 const user = (content: UserMessage["content"]): UserMessage => ({ role: "user", content, timestamp: 1 });
 const assistant = (stopReason: AssistantMessage["stopReason"] = "stop"): AssistantMessage => ({ ...fauxAssistantMessage("ok"), stopReason } as AssistantMessage);
 const toolResult: ToolResultMessage = { role: "toolResult", toolCallId: "call", toolName: "recall_context_image", content: [image], isError: false, timestamp: 3 };
-const countImages = (messages: readonly AgentMessage[]) => JSON.stringify(messages).split(image.data).length - 1;
+const countImages = (messages: readonly AgentMessage[], target = image) => JSON.stringify(messages).split(target.data).length - 1;
+const secondImage = { ...image, data: Buffer.alloc(1024, 1).toString("base64") };
+const thirdImage = { ...image, data: Buffer.alloc(1024, 2).toString("base64") };
+const result = (target: ImageContent, id: string): ToolResultMessage => ({ ...toolResult, toolCallId: id, content: [target] });
 
 test("first image survives, completed history becomes a recoverable reference without mutating session data", () => {
   const original = [user([{ type: "text", text: "inspect" }, image])];
@@ -24,13 +27,35 @@ test("first image survives, completed history becomes a recoverable reference wi
   assert.equal(findImage(history, "unknown"), undefined);
 });
 
-test("recall uploads once; subsequent requests contain only references", () => {
-  const history = [user([image]), assistant("toolUse"), toolResult];
+test("distinct images remain available throughout the active retrieval loop", () => {
+  const history = [user("audit"), assistant("toolUse"), result(image, "a"), assistant("toolUse"), result(secondImage, "b"), assistant("toolUse"), result(thirdImage, "c")];
+  const active = projectImages(history, () => true);
+  assert.equal(active.omittedImages, 0);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(active.messages, target), 1);
+  const continued = projectImages([...history, assistant()], () => true);
+  assert.equal(continued.omittedImages, 0, "same user turn must retain evidence even after an assistant stop");
+  const next = projectImages([...history, assistant(), user("next task")], () => true);
+  assert.equal(next.omittedImages, 3);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(next.messages, target), 0);
+});
+
+test("multiple recalled images stay together until the next completed user turn", () => {
+  const history = [user([image, secondImage]), assistant(), user("compare"), assistant("toolUse"), result(image, "recall-a"), assistant("toolUse"), result(secondImage, "recall-b"), assistant("toolUse"), result(thirdImage, "new-c"), assistant("toolUse"), result(image, "repeat-a")];
   const projected = projectImages(history, () => true);
-  assert.equal(countImages(projected.messages), 1);
-  assert.equal(projected.omittedImages, 1);
-  assert.equal(projected.messages[2], toolResult);
-  assert.equal(countImages(projectImages([...history, assistant()], () => true).messages), 0);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(projected.messages, target), 1);
+  assert.equal(projected.omittedImages, 3, "historical originals and the duplicate active image become references");
+  const next = projectImages([...history, assistant(), user("next")], () => true);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(next.messages, target), 0);
+});
+
+test("steering and failed turns do not discard unfinished visual evidence", () => {
+  const history = [user([image]), assistant("toolUse"), result(secondImage, "b"), assistant("error"), user("retry with this"), assistant("toolUse"), result(thirdImage, "c")];
+  const projected = projectImages(history, () => true);
+  assert.equal(projected.omittedImages, 0);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(projected.messages, target), 1);
+  const continuation = [user([image]), assistant(), assistant("toolUse"), result(secondImage, "b"), assistant("error"), user("retry")];
+  const continued = projectImages(continuation, () => true);
+  assert.equal(continued.omittedImages, 0, "a stop followed by an unfinished continuation is not a completed turn");
 });
 
 test("a failed response, unavailable source, small image and unsupported transport are not trimmed", () => {

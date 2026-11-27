@@ -1,0 +1,168 @@
+{
+  "documents": [
+    {
+      "id": "doc-201",
+      "lot": "A17",
+      "kind": "order",
+      "reference": "PO-17",
+      "upperLabel": "ordered units",
+      "lowerLabel": "receipt reference",
+      "upper": "1250",
+      "lower": "4831",
+      "width": 480,
+      "height": 290,
+      "seed": 201
+    },
+    {
+      "id": "doc-317",
+      "lot": "A17",
+      "kind": "receipt",
+      "reference": "4831",
+      "upperLabel": "received units",
+      "lowerLabel": "inspection reference",
+      "upper": "1190",
+      "lower": "7294",
+      "width": 960,
+      "height": 600,
+      "seed": 317
+    },
+    {
+      "id": "doc-509",
+      "lot": "A17",
+      "kind": "inspection",
+      "reference": "7294",
+      "upperLabel": "rejected units",
+      "lowerLabel": "inspector code",
+      "upper": "0040",
+      "lower": "5628",
+      "width": 480,
+      "height": 290,
+      "seed": 509
+    },
+    {
+      "id": "doc-624",
+      "lot": "A17",
+      "kind": "adjustment",
+      "reference": "ADJ-17",
+      "upperLabel": "additional accepted units",
+      "lowerLabel": "authorization code",
+      "upper": "0015",
+      "lower": "6139",
+      "width": 960,
+      "height": 600,
+      "seed": 624
+    },
+    {
+      "id": "doc-202",
+      "lot": "A18",
+      "kind": "order",
+      "reference": "PO-18",
+      "upperLabel": "ordered units",
+      "lowerLabel": "receipt reference",
+      "upper": "1420",
+      "lower": "4832",
+      "width": 480,
+      "height": 290,
+      "seed": 202
+    },
+    {
+      "id": "doc-318",
+      "lot": "A18",
+      "kind": "receipt",
+      "reference": "4832",
+      "upperLabel": "received units",
+      "lowerLabel": "inspection reference",
+      "upper": "1375",
+      "lower": "7295",
+      "width": 480,
+      "height": 290,
+      "seed": 318
+    },
+    {
+      "id": "doc-510",
+      "lot": "A18",
+      "kind": "inspection",
+      "reference": "7295",
+      "upperLabel": "rejected units",
+      "lowerLabel": "inspector code",
+      "upper": "0050",
+      "lower": "8794",
+      "width": 480,
+      "height": 290,
+      "seed": 510
+    },
+    {
+      "id": "doc-835",
+      "lot": "B17",
+      "kind": "receipt",
+      "reference": "4831",
+      "upperLabel": "received units",
+      "lowerLabel": "inspection reference",
+      "upper": "0999",
+      "lower": "9012",
+      "width": 480,
+      "height": 290,
+      "seed": 835
+    }
+  ],
+  "rounds": [
+    {
+      "name": "linked-audit",
+      "prompt": "Audit lot A17. Find its order, then follow the receipt reference on the order and the inspection reference on the receipt through the register. Compare ordered, received and rejected units; accepted = received - rejected; shortage = ordered - accepted. Do not use the adjustment yet. Return JSON with exactly ordered, received, rejected, accepted, shortage (numbers), receiptRef, inspectionRef (strings), and evidence (the three record IDs).",
+      "expected": {
+        "ordered": 1250,
+        "received": 1190,
+        "rejected": 40,
+        "accepted": 1150,
+        "shortage": 100,
+        "receiptRef": "4831",
+        "inspectionRef": "7294",
+        "evidence": [
+          "doc-201",
+          "doc-317",
+          "doc-509"
+        ]
+      },
+      "maxRequests": 10
+    },
+    {
+      "name": "text-analysis",
+      "prompt": "Using the completed A17 audit, calculate accepted and shortage percentages of ordered units. This only requires arithmetic from the preceding answer; no new evidence is needed. Return JSON with exactly acceptedRate, shortageRate, shortage (numbers). Rates are percentages, not fractions.",
+      "expected": {
+        "acceptedRate": 92,
+        "shortageRate": 8,
+        "shortage": 100
+      },
+      "maxRequests": 3
+    },
+    {
+      "name": "historical-verification",
+      "prompt": "Verify the original A17 inspection slip, specifically the lower-field inspector code that was not required in the first answer. Check the image rather than guessing or using the inspection reference as the inspector code. Return JSON with exactly inspectorCode (string), rejected (number), and evidence (the inspection record ID in an array).",
+      "expected": {
+        "inspectorCode": "5628",
+        "rejected": 40,
+        "evidence": [
+          "doc-509"
+        ]
+      },
+      "maxRequests": 5
+    },
+    {
+      "name": "late-adjustment",
+      "prompt": "Now find the A17 adjustment record. Read its additional accepted units and authorization code from the image, then revise the previous accepted and shortage quantities. Cite the adjustment plus the original order, receipt and inspection records. Return JSON with exactly additional, accepted, shortage (numbers), authorization (string), and evidence (four record IDs).",
+      "expected": {
+        "additional": 15,
+        "accepted": 1165,
+        "shortage": 85,
+        "authorization": "6139",
+        "evidence": [
+          "doc-201",
+          "doc-317",
+          "doc-509",
+          "doc-624"
+        ]
+      },
+      "maxRequests": 6
+    }
+  ]
+}
