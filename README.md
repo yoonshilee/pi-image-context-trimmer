@@ -28,6 +28,13 @@ SDK applications can load the extension through `DefaultResourceLoader` and its 
 
 After a user task involving images settles, Pi displays a compact, expandable **Image Context Trimmer** card in the conversation. The card records the number of image blocks considered and replaced, the omitted Base64 bytes and reduction rate, and successful image recalls. Expand it with the tool-output expansion shortcut (default `Ctrl+O`) to see reference text size, context projection counts, bypass reasons, and Pi-reported assistant-response token usage.
 
+For example, a local two-turn smoke test rendered:
+
+```text
+Image Context Trimmer · Task
+Image blocks 1 → 0 · 1 replaced · Base64 omitted 16.17 KiB (100.0%)
+```
+
 The card is a native, durable custom session entry rendered with `appendEntry` / `registerEntryRenderer`, not a tool call or a model message. It does not enter the model context or trigger an additional model request. Image blocks and Base64 are counted across context projections, including repeated occurrences of the same image, not unique files or captured network traffic. Reported tokens are observed usage, not estimated token savings.
 
 | Command | Effect |
@@ -80,39 +87,33 @@ These are example values, not extension defaults. `maxBytes` measures the Base64
 
 ## Validation
 
-`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies trimming between model requests within one user turn, repeated reads, explicit recall, multiple pending images, failed-request retention, preservation of system/tool updates, and native incremental continuation. These tests do not invoke paid models or measure visual-answer accuracy.
+`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies trimming between model requests within one user turn, repeated reads, explicit recall, multiple pending images, failed-request retention, preservation of system/tool updates, and native incremental continuation. Statistics tests verify task summaries, config and command overrides, file-backed session persistence, and that statistics never enter model requests. These local tests do not invoke paid models or measure visual-answer accuracy.
 
-### v0.2.0 real-model validation (2026-11-27)
+### Real-model validation (v0.3.0, 2026-11-27)
 
-The measurements in this section are from the tagged v0.2.0 release, which trims images after completed user turns. They do not measure within-turn trimming; that behavior is verified by the local tests above and has not been evaluated with real models.
+The four-turn retrieval workflow uses eight synthetic document images (four target records and four distractors), including linked-document auditing, text-only analysis, historical image verification, and retrieval of a new adjustment record. The trimmed runs use their hash-verified complete baselines with the same models, prompts, fixtures, full-context SSE protocol, and exact-match scoring.
 
-The latest completed comparisons per model and scenario use full-context SSE requests, empty starting sessions, the same prompts and fixtures, and exact-match scoring. The latest `gpt-6.2-sol` trimmed run uses its hash-verified complete baseline with the same benchmark protocol.
+| Model | Without extension | With extension | JSON payload reduction | Correct fields (baseline / trimmed) |
+|---|---:|---:|---:|---:|
+| gpt-6.1-sol | 18.47 MiB | 7.22 MiB | **60.9%** | 19/19 · 19/19 |
+| gpt-6.2-sol | 18.47 MiB | 7.22 MiB | **60.9%** | 19/19 · 19/19 |
 
-| Model | Scenario | Without extension | With extension | JSON payload reduction | Correct answers (baseline / trimmed) |
-|---|---|---:|---:|---:|---:|
-| gpt-6.1-sol | Small image, three turns | 931.56 KiB | 627.51 KiB | **32.6%** | 3/3 · 3/3 |
-| gpt-6.1-sol | Large image, three turns | 3.54 MiB | 2.36 MiB | **33.2%** | 3/3 · 3/3 |
-| gpt-6.1-sol | Multi-step retrieval, four turns | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 fields |
-| gpt-6.2-sol | Multi-step retrieval, four turns | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 fields |
+| Metric | GPT-6.1 Sol (baseline → trimmed) | GPT-6.2 Sol (baseline → trimmed) |
+|---|---:|---:|
+| Image blocks sent | 32 → 12 | 32 → 12 |
+| Correct user turns | 4/4 → 4/4 | 4/4 → 4/4 |
+| Model requests | 13 → 15 | 13 → 15 |
+| Original-image recalls | 0 → 3 | 0 → 3 |
+| Reported total tokens | 21,787 → 23,244 | 22,109 → 23,385 |
 
-The multi-step workflow uses eight synthetic document images (four target records and four distractors) and four tasks: a linked-document audit, text-only analysis, historical image verification, and retrieval of a new adjustment record.
-
-| Latest GPT-6.2 Sol retrieval metrics | Without extension | With extension | Change |
+| GPT-6.2 Sol user turn | Without extension | With extension | Payload reduction |
 |---|---:|---:|---:|
-| Image blocks sent | 32 | 11 | **−65.6%** |
-| Correct user turns | 4/4 | 4/4 | Unchanged |
-| Model requests | 13 | 13 | Unchanged |
-| Original-image recalls | 0 | 1 | +1 |
-| Reported total tokens | 22,109 | 17,707 | −19.9% |
+| Linked-document audit | 5.37 MiB | 5.69 MiB | −6.0% |
+| Text-only analysis | 1.79 MiB | 8.28 KiB | **99.5%** |
+| Historical image verification | 3.88 MiB | 327.12 KiB | **91.8%** |
+| New adjustment record | 7.45 MiB | 1.21 MiB | **83.8%** |
 
-| User turn | Without extension | With extension | Payload reduction |
-|---|---:|---:|---:|
-| Linked-document audit | 5.37 MiB | 5.37 MiB | ≈0% |
-| Text-only analysis | 1.79 MiB | 6.72 KiB | **99.6%** |
-| Historical image verification | 3.88 MiB | 324.01 KiB | **91.8%** |
-| New adjustment record | 7.45 MiB | 1.20 MiB | **83.8%** |
-
-In these v0.2.0 measurements, the initial audit retains its acquired images until the task finishes. Subsequent turns avoid repeatedly transmitting historical images; the measured payload includes every additional model request and recall. Sizes are serialized JSON bytes rather than captured network traffic. Results are specific to the completed synthetic scenarios, not estimates of general accuracy, latency, gateway resources, or billing.
+The initial audit requires extra visual recalls, while subsequent turns benefit from historical image trimming. All additional model requests and recalls are included in the measured payload. Sizes are serialized JSON bytes, not captured network traffic. These results are specific to the tested synthetic workflows and do not establish general accuracy, latency, gateway resource, or billing savings. In this workflow reported token usage increases despite the smaller request bodies.
 
 ## License
 

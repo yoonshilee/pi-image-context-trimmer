@@ -1,6 +1,6 @@
 {
   "name": "pi-image-context-trimmer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Reduce repeated image uploads in stateless Pi conversations.",
   "engines": {
