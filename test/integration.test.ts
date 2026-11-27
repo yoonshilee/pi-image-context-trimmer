@@ -11,7 +11,7 @@ import { normalizeContext, type AssistantMessage, type ImageContent, type Model 
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { stream as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
-import { imageId, projectImages, RECALL_TOOL } from "../src/image-context.ts";
+import { imageId, projectImages, RECALL_TOOL, supportsProjection } from "../src/image-context.ts";
 
 const image: ImageContent = { type: "image", mimeType: "image/png", data: (await readFile(new URL("./fixture.png", import.meta.url))).toString("base64") };
 const model: Model<"openai-completions"> = {
@@ -20,7 +20,7 @@ const model: Model<"openai-completions"> = {
 };
 const imageCount = (body: string, data = image.data) => body.split(data).length - 1;
 
-async function runSession(t: TestContext, optimize: boolean, recallImage = false) {
+async function runSession(t: TestContext, optimize: boolean, recallImage = false, changeTools = false) {
   const bodies: string[] = [];
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -54,7 +54,22 @@ async function runSession(t: TestContext, optimize: boolean, recallImage = false
   await session.bindExtensions({ onError: error => errors.push(error.error) });
   if (optimize) assert(session.getActiveToolNames().includes(RECALL_TOOL));
   await session.prompt("Inspect this image", { images: [image] });
+  if (changeTools) {
+    const active = session.getActiveToolNames();
+    const removed = active.find(name => name !== RECALL_TOOL);
+    assert(removed);
+    session.setActiveToolsByName(active.filter(name => name !== removed));
+  }
   await session.prompt("Follow up on the image");
+  if (changeTools) {
+    const original = session.messages;
+    const systemMessages = original.filter(message => message.role === "system");
+    assert(systemMessages.length > 1, "fixture must create a mid-conversation system update");
+    const projected = await session.agent.transformContext?.(original);
+    assert(projected);
+    assert.deepEqual(projected.filter(message => message.role === "system"), systemMessages);
+    assert.equal(imageCount(JSON.stringify(projected)), 0);
+  }
   await session.prompt("Continue without further image inspection");
   assert.deepEqual(errors, []);
   assert(session.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "user" && JSON.stringify(entry.message.content).includes(image.data)));
@@ -72,6 +87,10 @@ test("real Pi SDK and local HTTP gateway: history reference, recall and original
   assert.deepEqual(noRecall.map(body => imageCount(body)), [1, 0, 0]);
   const total = (bodies: string[]) => bodies.reduce((sum, body) => sum + Buffer.byteLength(body), 0);
   console.log(`SDK local HTTP: baseline ${total(baseline)} bytes / 3 requests; optimized ${total(noRecall)} bytes / 3 requests; optimized with recall ${total(optimized)} bytes / 4 requests.`);
+});
+
+test("real Pi SDK preserves mid-conversation system messages and tool declarations when trimming", async t => {
+  await runSession(t, true, false, true);
 });
 
 test("installed stateless serializers replay Base64 on each request; image size and request count both matter", async () => {
@@ -134,4 +153,34 @@ test("Anthropic Messages preserves tool-result images in the active turn and ser
     }).result();
     assert(received);
   }
+});
+
+
+test("native Messages threads keep incremental continuation instead of replaying historical images", async () => {
+  const api = "anthropic-messages" as const;
+  const native = { ...model, api, baseUrl: "https://api.anthropic.com", compat: undefined };
+  const bodies: string[] = [];
+  const options = { apiKey: "local-fixture", maxRetries: 0, sessionId: "native-thread-fixture", cacheRetention: "short" as const,
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? init.body : await new Request(input, init).text();
+      bodies.push(body);
+      const events = [
+        { type: "message_start", message: { id: `msg-${bodies.length}`, type: "message", role: "assistant", model: native.id, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Done." } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } },
+        { type: "message_stop" },
+      ];
+      return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+    },
+  };
+  const first = { role: "user" as const, content: [image], timestamp: 1 };
+  const answer = await streamAnthropic(native, normalizeContext({ messages: [first] }), options).result();
+  assert.equal(answer.stopReason, "stop");
+  const messages = [first, answer, { role: "user" as const, content: "Continue", timestamp: 2 }];
+  const projected = supportsProjection(native) ? projectImages(messages, () => true).messages : messages;
+  await streamAnthropic(native, normalizeContext({ messages: projected.filter(message => message.role === "user" || message.role === "assistant" || message.role === "toolResult" || message.role === "system") }), options).result();
+  assert.deepEqual(bodies.map(body => JSON.parse(body).thread.type), ["create", "continue"]);
+  assert.deepEqual(bodies.map(body => imageCount(body)), [1, 0]);
 });

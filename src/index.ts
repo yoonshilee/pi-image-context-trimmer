@@ -26,8 +26,8 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
     },
   });
 
-  pi.on("context", (event, ctx) => {
-    if (!enabled || !ctx.model?.input.includes("image") || !supportsProjection(ctx.model.api, options.codexTransport) || !pi.getActiveTools().includes(RECALL_TOOL)) return;
+  pi.on("context_with_system", (event, ctx) => {
+    if (!enabled || !ctx.model?.input.includes("image") || !supportsProjection(ctx.model, options.codexTransport) || !pi.getActiveTools().includes(RECALL_TOOL)) return;
     // Build the source index only when there is an image to replace.
     let available: Set<string> | undefined;
     const projected = projectImages(event.messages, id => {
@@ -55,7 +55,7 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
       const action = args.trim() || "status";
       if (action === "on" || action === "off") enabled = action === "on";
       else if (action !== "status") { ctx.ui.notify("Usage: /image-context-trimmer [status|on|off]", "warning"); return; }
-      const supported = !!ctx.model?.input.includes("image") && supportsProjection(ctx.model.api, options.codexTransport) && pi.getActiveTools().includes(RECALL_TOOL);
+      const supported = !!ctx.model?.input.includes("image") && supportsProjection(ctx.model, options.codexTransport) && pi.getActiveTools().includes(RECALL_TOOL);
       ctx.ui.notify(`Image context trimmer: ${enabled ? "on" : "off"}; API ${supported ? "supported" : "bypassed"}; ${requests} eligible requests, ${omittedImages} image blocks replaced, ${(omittedBytes / 1024 / 1024).toFixed(2)} MiB of Base64 omitted.`, "info");
     },
   });

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, type AssistantMessage, type ImageContent, type UserMessage, type ToolResultMessage } from "@earendil-works/pi-ai";
@@ -61,16 +63,52 @@ test("steering and failed turns do not discard unfinished visual evidence", () =
 test("a failed response, unavailable source, small image and unsupported transport are not trimmed", () => {
   const history = [user([image]), assistant("error"), user("retry")];
   assert.equal(countImages(projectImages(history, () => true).messages), 1);
-  assert.equal(countImages(projectImages([...history, assistant()], () => false).messages), 1);
-  assert.equal(projectImages([user([{ ...image, data: "aA==" }]), assistant()], () => true).omittedImages, 0);
-  assert.equal(supportsProjection("openai-codex-responses"), false);
-  assert.equal(supportsProjection("openai-codex-responses", "sse"), true);
-  assert.equal(supportsProjection("anthropic-messages"), true);
-  assert.equal(supportsProjection("google-generative-ai"), false);
+  assert.equal(countImages(projectImages([user([image]), assistant(), user("next")], () => false).messages), 1);
+  assert.equal(projectImages([user([{ ...image, data: "aA==" }]), assistant(), user("next")], () => true).omittedImages, 0);
+  const codex = { api: "openai-codex-responses", baseUrl: "https://example.test" };
+  assert.equal(supportsProjection(codex), false);
+  assert.equal(supportsProjection(codex, "sse"), true);
+  assert.equal(supportsProjection({ api: "google-generative-ai", baseUrl: "https://example.test" }), false);
 });
 
 test("duplicate fresh blocks are transmitted once", () => {
   const projected = projectImages([user([image, image])], () => true);
   assert.equal(projected.omittedImages, 1);
   assert.equal(countImages(projected.messages), 1);
+});
+
+test("stateless Messages APIs are supported but native incremental threads are bypassed", () => {
+  const gateway = { api: "anthropic-messages", baseUrl: "https://example.test/v1" };
+  const native = { ...gateway, baseUrl: "https://api.anthropic.com" };
+  assert.equal(supportsProjection(gateway), true);
+  assert.equal(supportsProjection(native), false);
+  assert.equal(supportsProjection({ ...gateway, compat: { supportsMessageThreads: true } }), false);
+  assert.equal(supportsProjection({ ...native, compat: { supportsMessageThreads: false } }), true);
+});
+
+test("repeated active tool images do not rewrite an earlier visible image", () => {
+  const history = [user("read"), assistant("toolUse"), result(image, "first")];
+  const previous = projectImages(history, () => true).messages;
+  const projected = projectImages([...history, assistant("toolUse"), result(image, "repeat")], () => true);
+  assert.deepEqual(projected.messages.slice(0, history.length), previous);
+  assert.equal(countImages(projected.messages), 1);
+  assert.match(JSON.stringify(projected.messages.at(-1)), /already included earlier/);
+});
+
+test("image IDs reuse digests without returning stale hashes for changed content", t => {
+  const create = t.mock.method(crypto, "createHash");
+  syncBuiltinESMExports();
+  try {
+    const mutable = { ...image };
+    const before = imageId(mutable);
+    assert.equal(imageId(mutable), before);
+    assert.equal(create.mock.callCount(), 1);
+    mutable.data = secondImage.data;
+    assert.notEqual(imageId(mutable), before);
+    assert.equal(create.mock.callCount(), 2);
+    assert.equal(imageId(mutable), imageId(secondImage));
+  } finally {
+    create.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
