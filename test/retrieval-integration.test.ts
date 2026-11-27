@@ -90,13 +90,13 @@ async function run(t: TestContext, trimmed: boolean, limit?: number) {
   return { sentImages, totalBytes, trace };
 }
 
-test("real Pi SDK trims within a tool loop, deduplicates repeated reads and honors explicit recall", async t => {
+test("real Pi SDK trims within a tool loop, deduplicates repeated reads and retains explicit recalls for the task", async t => {
   const baseline = await run(t, false);
   const trimmed = await run(t, true);
   assert.deepEqual(baseline.trace, trimmed.trace);
   assert.deepEqual(baseline.trace.filter(event => event.tool === "read_record").flatMap(event => event.records), ["doc-201", "doc-201", "doc-317", "doc-509", "doc-624"]);
   assert.deepEqual(baseline.sentImages.map(items => items.length), [0, 0, 1, 1, 2, 3, 3, 4, 4, 4, 4, 4, 5]);
-  assert.deepEqual(trimmed.sentImages, [[], [], ["doc-201"], [], [], ["doc-201"], ["doc-317"], [], ["doc-509"], [], [], ["doc-509"], [], [], ["doc-624"]]);
+  assert.deepEqual(trimmed.sentImages, [[], [], ["doc-201"], [], [], ["doc-201"], ["doc-201", "doc-317"], ["doc-201"], ["doc-201", "doc-509"], [], [], ["doc-509"], [], [], ["doc-624"]]);
   assert(trimmed.totalBytes < baseline.totalBytes);
   console.log(`Retrieval local HTTP: baseline ${baseline.totalBytes} B / ${baseline.sentImages.flat().length} image blocks; trimmed ${trimmed.totalBytes} B / ${trimmed.sentImages.flat().length} image blocks.`);
 });

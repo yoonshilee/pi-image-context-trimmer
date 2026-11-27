@@ -52,7 +52,7 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
   pi.registerTool({
     name: RECALL_TOOL,
     label: "Recall context image",
-    description: "Read an original image from the current conversation by its image-reference ID. Images become references after a successful model response, including within a tool loop. Call this when a reference lacks the visual detail needed for your answer; recall multiple images in the same tool batch to compare them together.",
+    description: "Read an original image from the current conversation by its image-reference ID. Ordinary images become references after a successful model response, including within a tool loop. Call this when a reference lacks the visual detail needed for your answer. Recalled images remain visible together until the current user task finishes.",
     parameters: Type.Object({ id: Type.String({ description: "The exact 64-character image reference ID.", pattern: "^[a-f0-9]{64}$" }) }),
     async execute(_toolCallId, { id }, _signal, _onUpdate, ctx) {
       forStats(stats => { stats.recallAttempts++; });

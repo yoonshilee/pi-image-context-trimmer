@@ -42,11 +42,17 @@ export function supportsProjection(model: { api: string; baseUrl: string; compat
 
 export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean) {
   let processedThrough = -1;
+  let completedThrough = -1;
+  let pendingStop = -1;
   // A successful response acknowledges its input images, including during tool loops.
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
-    if (message.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "toolUse")) {
-      processedThrough = i;
+    if (message.role === "assistant") {
+      if (message.stopReason === "stop" || message.stopReason === "toolUse") processedThrough = i;
+      pendingStop = message.stopReason === "stop" ? i : -1;
+    } else if (message.role === "user") {
+      if (pendingStop !== -1) completedThrough = pendingStop;
+      pendingStop = -1;
     }
   }
   let omittedImages = 0;
@@ -65,7 +71,9 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
       const processed = i < processedThrough;
       if (processed) processedImages.add(id);
       const recalled = message.role === "toolResult" && message.toolName === RECALL_TOOL;
-      if (!processed && !includedImages.has(id) && (!processedImages.has(id) || recalled)) {
+      // Explicit recalls accumulate evidence for the active task instead of forcing repeated recall loops.
+      const pinned = recalled && i > completedThrough;
+      if (!includedImages.has(id) && (pinned || (!processed && (!processedImages.has(id) || recalled)))) {
         includedImages.add(id);
         return block;
       }

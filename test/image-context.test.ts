@@ -43,7 +43,7 @@ test("only new images are sent after each successful request in the same retriev
   for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(next.messages, target), 0);
 });
 
-test("multiple new or explicitly recalled images are sent together until a successful response", () => {
+test("multiple recalled images remain visible together until a new user task", () => {
   const initial = [user([image, secondImage, thirdImage])];
   const fresh = projectImages(initial, () => true);
   assert.equal(fresh.omittedImages, 0);
@@ -69,7 +69,7 @@ test("errors, aborts, output limits and steering retain images without a success
   assert.equal(projectImages([user([image]), user("additional instructions")], () => true).omittedImages, 0);
 });
 
-test("repeated tool reads reuse references but an explicit recall resends the original once", () => {
+test("repeated tool reads reuse references while explicit recall pins the image for the current task", () => {
   const history = [user("read"), assistant("toolUse"), result(image, "first"), assistant("toolUse"), result(image, "repeat")];
   const repeated = projectImages(history, () => true);
   assert.equal(countImages(repeated.messages), 0);
@@ -77,7 +77,8 @@ test("repeated tool reads reuse references but an explicit recall resends the or
   assert.match(JSON.stringify(repeated.messages.at(-1)), new RegExp(RECALL_TOOL));
   const recalled = [...history, assistant("toolUse"), result(image, "recall", RECALL_TOOL)];
   assert.equal(countImages(projectImages(recalled, () => true).messages), 1);
-  assert.equal(countImages(projectImages([...recalled, assistant("toolUse")], () => true).messages), 0);
+  assert.equal(countImages(projectImages([...recalled, assistant("toolUse")], () => true).messages), 1);
+  assert.equal(countImages(projectImages([...recalled, assistant(), user("next task")], () => true).messages), 0);
   const failedRecall = [...recalled, assistant("error")];
   assert.equal(countImages(projectImages(failedRecall, () => true).messages), 1);
 });
@@ -133,4 +134,15 @@ test("image IDs reuse digests without returning stale hashes for changed content
     create.mock.restore();
     syncBuiltinESMExports();
   }
+});
+
+
+test("sequential recalls accumulate visual evidence across tool calls and release it after task completion", () => {
+  const history = [user([image, secondImage, thirdImage]), assistant("toolUse"), result(image, "recall-a", RECALL_TOOL), assistant("toolUse"), result(secondImage, "recall-b", RECALL_TOOL), assistant("toolUse"), result(thirdImage, "recall-c", RECALL_TOOL)];
+  const projected = projectImages(history, () => true);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(projected.messages, target), 1);
+  const continued = projectImages([...history, assistant("toolUse")], () => true);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(continued.messages, target), 1);
+  const next = projectImages([...history, assistant(), user("next task")], () => true);
+  for (const target of [image, secondImage, thirdImage]) assert.equal(countImages(next.messages, target), 0);
 });
