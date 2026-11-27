@@ -6,7 +6,7 @@ A Pi extension that replaces historical images from completed turns with recover
 
 ## Installation
 
-Tested with Pi 1.6.0. By default, the extension targets vision-capable models using the `openai-completions`, `openai-responses`, and `anthropic-messages` APIs.
+Requires a Pi host with `context_with_system` support (tested with Pi 1.6.0). The extension targets stateless vision-capable models using the `openai-completions`, `openai-responses`, and `anthropic-messages` APIs.
 
 ```sh
 pi install npm:pi-image-context-trimmer
@@ -29,11 +29,11 @@ SDK applications can load the extension through `DefaultResourceLoader` and its 
 ## How it works
 
 1. New user attachments and tool-result images visible on the current session branch are sent in Pi's original image format.
-2. All distinct images acquired or recalled during the current user turn remain available together across tool calls. Once a successful final response is followed by a new user prompt, larger historical images become short references containing their SHA-256 identifiers. Recoverable exact duplicates within a request can also be replaced by references.
+2. All distinct images acquired or recalled during the current user turn remain available together across tool calls. Once a successful final response is followed by a new user prompt, larger historical images become short references containing their SHA-256 identifiers. Recoverable exact duplicates within the active turn become references to the earliest visible copy, so appending a duplicate does not rewrite the earlier image.
 3. When exact visual details are required, the model uses `recall_context_image`. The extension finds and returns the original image from the current session branch. That image remains available throughout the current turn and can be trimmed when a later turn begins. Pi may still normalize tool-result images according to the current model's limits.
-4. Original session messages remain unchanged. Unfinished or failed turns retain their visual evidence; images are also retained when their source cannot be recovered, tools are disabled, or the model does not support images. The extension bypasses native WebSocket incremental continuation and other unverified model interfaces.
+4. Original session messages, system updates, and tool declarations remain unchanged. Unfinished or failed turns retain their visual evidence; images are also retained when their source cannot be recovered, tools are disabled, or the model does not support images. The extension bypasses native WebSocket continuation, incremental Messages API threads, and other unverified model interfaces.
 
-No images are uploaded to external storage. The extension does not modify Pi's source code or session-file format, and it does not remove Base64 from persisted session files. Re-examining an older image may require an extra tool call, and changing the context prefix can affect prompt caching. The omitted-byte statistic counts Base64 characters in the context, not captured network traffic.
+No images are uploaded to external storage. The extension does not modify Pi's source code or session-file format, and it does not remove Base64 from persisted session files. Re-examining an older image may require an extra tool call, and trimming a completed turn can affect prompt caching. Recall is restricted to the current session branch; after compaction, a reference ID may no longer be present in the model context even when the original image remains in the session. The omitted-byte statistic counts Base64 characters in the context, not captured network traffic.
 
 ## Single-image size
 
@@ -58,35 +58,37 @@ These are example values, not extension defaults. `maxBytes` measures the Base64
 
 ## Validation
 
-`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies that distinct images remain available during a multi-step retrieval chain, completed turns are trimmed, older images can be recalled, and original session data is preserved. These tests do not invoke paid models.
+`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies active retrieval and recall, completed-turn trimming, stable duplicate handling, preservation of system/tool updates, and native incremental continuation. These tests do not invoke paid models.
 
 ### Real-model validation (2026-11-27)
 
-Two scenarios were validated with `gpt-6.1-sol` using full-context SSE requests. Each baseline and trimmed run started from an empty session with the same prompts, fixtures and exact-match scoring.
+The latest completed comparisons per model and scenario use full-context SSE requests, empty starting sessions, the same prompts and fixtures, and exact-match scoring. The latest `gpt-6.2-sol` trimmed run uses its hash-verified complete baseline with the same benchmark protocol.
 
-| Scenario | Without extension | With extension | JSON payload reduction | Correct answers (baseline / trimmed) |
-|---|---:|---:|---:|---:|
-| Single image, three turns | 931.56 KiB | 627.51 KiB | **32.6%** | 3/3 · 3/3 |
-| Multi-step visual retrieval, four turns | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 fields |
+| Model | Scenario | Without extension | With extension | JSON payload reduction | Correct answers (baseline / trimmed) |
+|---|---|---:|---:|---:|---:|
+| gpt-6.1-sol | Small image, three turns | 931.56 KiB | 627.51 KiB | **32.6%** | 3/3 · 3/3 |
+| gpt-6.1-sol | Large image, three turns | 3.54 MiB | 2.36 MiB | **33.2%** | 3/3 · 3/3 |
+| gpt-6.1-sol | Multi-step retrieval, four turns | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 fields |
+| gpt-6.2-sol | Multi-step retrieval, four turns | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 fields |
 
 The multi-step workflow uses eight synthetic document images (four target records and four distractors) and four tasks: a linked-document audit, text-only analysis, historical image verification, and retrieval of a new adjustment record.
 
-| Multi-step metric | Without extension | With extension | Change |
+| Latest GPT-6.2 Sol retrieval metrics | Without extension | With extension | Change |
 |---|---:|---:|---:|
 | Image blocks sent | 32 | 11 | **−65.6%** |
 | Correct user turns | 4/4 | 4/4 | Unchanged |
 | Model requests | 13 | 13 | Unchanged |
 | Original-image recalls | 0 | 1 | +1 |
-| Reported total tokens | 21,787 | 17,511 | −19.6% |
+| Reported total tokens | 22,109 | 17,707 | −19.9% |
 
 | User turn | Without extension | With extension | Payload reduction |
 |---|---:|---:|---:|
-| Linked-document audit | 5.37 MiB | 5.37 MiB | −0.1% |
-| Text-only analysis | 1.79 MiB | 6.73 KiB | **99.6%** |
-| Historical image verification | 3.88 MiB | 323.98 KiB | **91.8%** |
+| Linked-document audit | 5.37 MiB | 5.37 MiB | ≈0% |
+| Text-only analysis | 1.79 MiB | 6.72 KiB | **99.6%** |
+| Historical image verification | 3.88 MiB | 324.01 KiB | **91.8%** |
 | New adjustment record | 7.45 MiB | 1.20 MiB | **83.8%** |
 
-The initial audit keeps its acquired images visible until the task finishes. Subsequent turns avoid repeatedly transmitting historical images; the measured payload includes every additional model request and recall. Sizes are serialized JSON bytes rather than captured network traffic. Results are specific to the completed synthetic scenarios, not estimates of general accuracy, latency, gateway resources, or billing.
+The initial audit retains its acquired images until the task finishes. Subsequent turns avoid repeatedly transmitting historical images; the measured payload includes every additional model request and recall. Sizes are serialized JSON bytes rather than captured network traffic. Results are specific to the completed synthetic scenarios, not estimates of general accuracy, latency, gateway resources, or billing.
 
 ## License
 
