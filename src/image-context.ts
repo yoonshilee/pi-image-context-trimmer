@@ -41,21 +41,19 @@ export function supportsProjection(model: { api: string; baseUrl: string; compat
 }
 
 export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean) {
-  let completedThrough = -1;
-  let pendingStop = -1;
-  // A later user message closes the preceding successful turn; tool calls and continuations do not.
+  let processedThrough = -1;
+  // A successful response acknowledges its input images, including during tool loops.
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
-    if (message.role === "assistant") pendingStop = message.stopReason === "stop" ? i : -1;
-    else if (message.role === "user") {
-      if (pendingStop !== -1) completedThrough = pendingStop;
-      pendingStop = -1;
+    if (message.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "toolUse")) {
+      processedThrough = i;
     }
   }
   let omittedImages = 0;
   let omittedBase64Bytes = 0;
   const result = messages.slice();
-  const activeImages = new Set<string>();
+  const processedImages = new Set<string>();
+  const includedImages = new Set<string>();
 
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
@@ -64,12 +62,14 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
     const content = message.content.map(block => {
       if (block.type !== "image") return block;
       const id = imageId(block);
-      const active = i > completedThrough;
-      if (active && !activeImages.has(id)) {
-        activeImages.add(id);
+      const processed = i < processedThrough;
+      if (processed) processedImages.add(id);
+      const recalled = message.role === "toolResult" && message.toolName === RECALL_TOOL;
+      if (!processed && !includedImages.has(id) && (!processedImages.has(id) || recalled)) {
+        includedImages.add(id);
         return block;
       }
-      const text = active
+      const text = includedImages.has(id)
         ? `[Image reference ${id}. Identical image is already included earlier in this request.]`
         : `[Image reference ${id}. Previously provided or available elsewhere in this request. Use ${RECALL_TOOL} with this ID if exact visual details are needed.]`;
       if (block.data.length <= text.length || !recoverable(id)) return block;
