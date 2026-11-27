@@ -25,7 +25,7 @@ export function findImage(messages: readonly AgentMessage[], id: string): ImageC
 }
 
 export function supportsProjection(api: string, codexTransport?: "sse"): boolean {
-  return api === "openai-completions" || api === "openai-responses" || (api === "openai-codex-responses" && codexTransport === "sse");
+  return api === "openai-completions" || api === "openai-responses" || api === "anthropic-messages" || (api === "openai-codex-responses" && codexTransport === "sse");
 }
 
 export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean) {

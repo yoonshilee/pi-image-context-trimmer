@@ -65,7 +65,8 @@ test("a failed response, unavailable source, small image and unsupported transpo
   assert.equal(projectImages([user([{ ...image, data: "aA==" }]), assistant()], () => true).omittedImages, 0);
   assert.equal(supportsProjection("openai-codex-responses"), false);
   assert.equal(supportsProjection("openai-codex-responses", "sse"), true);
-  assert.equal(supportsProjection("anthropic-messages"), false);
+  assert.equal(supportsProjection("anthropic-messages"), true);
+  assert.equal(supportsProjection("google-generative-ai"), false);
 });
 
 test("duplicate fresh blocks are transmitted once", () => {

@@ -6,7 +6,7 @@ A Pi extension that replaces historical images from completed turns with recover
 
 ## Installation
 
-Tested with Pi 1.6.0. By default, the extension targets vision-capable models using the `openai-completions` and `openai-responses` APIs.
+Tested with Pi 1.6.0. By default, the extension targets vision-capable models using the `openai-completions`, `openai-responses`, and `anthropic-messages` APIs.
 
 ```sh
 pi install npm:pi-image-context-trimmer
@@ -60,28 +60,33 @@ These are example values, not extension defaults. `maxBytes` measures the Base64
 
 `npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies that distinct images remain available during a multi-step retrieval chain, completed turns are trimmed, older images can be recalled, and original session data is preserved. These tests do not invoke paid models.
 
-### Multi-step visual retrieval (2026-11-27)
+### Real-model validation (2026-11-27)
 
-Model: `kimi-k3`. The scenario uses eight synthetic document images (four target records and four distractors) and four user turns: a linked-document audit, text-only analysis, historical image verification, and a new adjustment record. Both runs use the same model, frozen corpus, prompts, and exact-match scoring. The baseline is a previously recorded complete run without the extension.
+Two scenarios were validated with `gpt-6.1-sol` using full-context SSE requests. Each baseline and trimmed run started from an empty session with the same prompts, fixtures and exact-match scoring.
 
-| Metric | Without extension | With extension | Change |
+| Scenario | Without extension | With extension | JSON payload reduction | Correct answers (baseline / trimmed) |
+|---|---:|---:|---:|---:|
+| Single image, three turns | 931.56 KiB | 627.51 KiB | **32.6%** | 3/3 · 3/3 |
+| Multi-step visual retrieval, four turns | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 fields |
+
+The multi-step workflow uses eight synthetic document images (four target records and four distractors) and four tasks: a linked-document audit, text-only analysis, historical image verification, and retrieval of a new adjustment record.
+
+| Multi-step metric | Without extension | With extension | Change |
 |---|---:|---:|---:|
-| Total JSON request payload | 15.47 MiB | 6.89 MiB | **−55.5%** |
-| Image blocks sent | 25 | 11 | **−56.0%** |
-| Correct rounds | 4/4 | 4/4 | Unchanged |
-| Correct answer fields | 19/19 | 19/19 | Unchanged |
-| Model requests | 12 | 13 | +1 |
+| Image blocks sent | 32 | 11 | **−65.6%** |
+| Correct user turns | 4/4 | 4/4 | Unchanged |
+| Model requests | 13 | 13 | Unchanged |
 | Original-image recalls | 0 | 1 | +1 |
-| Reported total tokens | 25,063 | 24,362 | −2.8% |
+| Reported total tokens | 21,787 | 17,511 | −19.6% |
 
 | User turn | Without extension | With extension | Payload reduction |
 |---|---:|---:|---:|
-| Linked-document audit | 5.36 MiB | 5.37 MiB | −0.1% |
-| Text-only analysis | 1.79 MiB | 5.85 KiB | **99.7%** |
-| Historical image verification | 1.79 MiB | 321.95 KiB | **82.4%** |
-| New adjustment record | 6.54 MiB | 1.20 MiB | **81.6%** |
+| Linked-document audit | 5.37 MiB | 5.37 MiB | −0.1% |
+| Text-only analysis | 1.79 MiB | 6.73 KiB | **99.6%** |
+| Historical image verification | 3.88 MiB | 323.98 KiB | **91.8%** |
+| New adjustment record | 7.45 MiB | 1.20 MiB | **83.8%** |
 
-The initial audit keeps all three acquired images visible until the task finishes. Later turns avoid repeatedly transmitting those images, with one explicit recall when historical visual details are needed. Payload measurements include all model requests, tool definitions, and recall overhead, and represent serialized JSON bytes rather than captured network traffic. This is one completed synthetic workflow with a nonconcurrent historical baseline, not a general accuracy, latency, gateway resource, or billing estimate.
+The initial audit keeps its acquired images visible until the task finishes. Subsequent turns avoid repeatedly transmitting historical images; the measured payload includes every additional model request and recall. Sizes are serialized JSON bytes rather than captured network traffic. Results are specific to the completed synthetic scenarios, not estimates of general accuracy, latency, gateway resources, or billing.
 
 ## License
 

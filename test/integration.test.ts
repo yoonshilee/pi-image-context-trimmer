@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { normalizeContext, type AssistantMessage, type ImageContent, type Model } from "@earendil-works/pi-ai";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
+import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { stream as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { imageId, projectImages, RECALL_TOOL } from "../src/image-context.ts";
 
@@ -73,8 +74,8 @@ test("real Pi SDK and local HTTP gateway: history reference, recall and original
   console.log(`SDK local HTTP: baseline ${total(baseline)} bytes / 3 requests; optimized ${total(noRecall)} bytes / 3 requests; optimized with recall ${total(optimized)} bytes / 4 requests.`);
 });
 
-test("installed OpenAI serializers replay Base64 on each request; image size and request count both matter", async () => {
-  for (const api of ["openai-completions", "openai-responses"] as const) {
+test("installed stateless serializers replay Base64 on each request; image size and request count both matter", async () => {
+  for (const api of ["openai-completions", "openai-responses", "anthropic-messages"] as const) {
     for (const size of [256 * 1024, 1024 * 1024]) {
       const data = Buffer.alloc(size, 0x42).toString("base64");
       const user = { role: "user" as const, content: [{ ...image, data }], timestamp: 1 };
@@ -95,7 +96,8 @@ test("installed OpenAI serializers replay Base64 on each request; image size and
           // These inputs contain simulated bytes and are intercepted before any network access.
           const transcript = normalizeContext({ messages: context.messages.filter(message => message.role === "user" || message.role === "assistant" || message.role === "toolResult" || message.role === "system") });
           if (api === "openai-completions") await streamCompletions(model, transcript, options).result();
-          else await streamResponses({ ...model, api }, transcript, options).result();
+          else if (api === "openai-responses") await streamResponses({ ...model, api }, transcript, options).result();
+          else await streamAnthropic({ ...model, api, compat: undefined }, transcript, options).result();
         }
       }
       assert.equal(baseline.length, 3);
@@ -104,5 +106,32 @@ test("installed OpenAI serializers replay Base64 on each request; image size and
       assert(optimized.slice(1).every(bytes => bytes < 4096));
       console.log(`${api}, ${size / 1024} KiB raw: baseline ${baseline.join(", ")}; optimized ${optimized.join(", ")} bytes.`);
     }
+  }
+});
+
+test("Anthropic Messages preserves tool-result images in the active turn and serializes historical references", async () => {
+  const api = "anthropic-messages" as const;
+  const assistant: AssistantMessage = { role: "assistant", api, provider: model.provider, model: model.id, content: [], stopReason: "stop", timestamp: 2,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+  const history = [
+    { role: "user" as const, content: "Read the record", timestamp: 1 },
+    { ...assistant, stopReason: "toolUse" as const, content: [{ type: "toolCall" as const, id: "read-1", name: "read_record", arguments: {} }] },
+    { role: "toolResult" as const, toolCallId: "read-1", toolName: "read_record", content: [image], isError: false, timestamp: 3 },
+  ];
+  for (const completed of [false, true]) {
+    const messages = completed ? [...history, { ...assistant, content: [{ type: "text" as const, text: "Record read." }] }, { role: "user" as const, content: "Continue", timestamp: 4 }] : history;
+    const projected = projectImages(messages, () => true);
+    let received = false;
+    await streamAnthropic({ ...model, api, compat: undefined }, normalizeContext({ messages: projected.messages.filter(message => message.role === "user" || message.role === "assistant" || message.role === "toolResult" || message.role === "system") }), {
+      apiKey: "local-fixture", maxRetries: 0, fetch: async (_input, init) => {
+        const body = typeof init?.body === "string" ? init.body : await new Request(_input, init).text();
+        assert(body.includes('"type":"tool_result"'));
+        assert.equal(imageCount(body), completed ? 0 : 1);
+        assert.equal(body.includes(imageId(image)), completed);
+        received = true;
+        return new Response(JSON.stringify({ error: { message: "intentional local measurement" } }), { status: 400, headers: { "content-type": "application/json" } });
+      },
+    }).result();
+    assert(received);
   }
 });
