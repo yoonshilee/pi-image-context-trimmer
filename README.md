@@ -2,7 +2,7 @@
 
 English | [简体中文](README_zh.md)
 
-A Pi extension that replaces historical images from completed turns with recoverable references, reducing repeated request payloads and bandwidth usage for stateless model APIs.
+A Pi extension that replaces images from successful model requests with recoverable references, reducing repeated request payloads and bandwidth usage for stateless model APIs, including within a single user turn.
 
 ## Installation
 
@@ -50,12 +50,12 @@ Set `display` to `"off"` to disable automatic cards. Slash commands override set
 
 ## How it works
 
-1. New user attachments and tool-result images visible on the current session branch are sent in Pi's original image format.
-2. All distinct images acquired or recalled during the current user turn remain available together across tool calls. Once a successful final response is followed by a new user prompt, larger historical images become short references containing their SHA-256 identifiers. Recoverable exact duplicates within the active turn become references to the earliest visible copy, so appending a duplicate does not rewrite the earlier image.
-3. When exact visual details are required, the model uses `recall_context_image`. The extension finds and returns the original image from the current session branch. That image remains available throughout the current turn and can be trimmed when a later turn begins. Pi may still normalize tool-result images according to the current model's limits.
-4. Original session messages, system updates, and tool declarations remain unchanged. Unfinished or failed turns retain their visual evidence; images are also retained when their source cannot be recovered, tools are disabled, or the model does not support images. The extension bypasses native WebSocket continuation, incremental Messages API threads, and other unverified model interfaces.
+1. New user attachments and tool-result images visible on the current session branch are sent in Pi's original image format. Multiple new images can be sent together; recoverable exact duplicates appear once per request.
+2. Once a model response finishes successfully, either with a final answer or tool calls, larger images preceding that response become short references containing their SHA-256 identifiers in the next request. This also applies within a single user turn. Ordinary tool reads that return an already processed identical image reuse its reference instead of uploading it again.
+3. When exact visual details are required, the model uses `recall_context_image`. The extension finds and returns the original image from the current session branch for the next model request, even if it was already processed. Recall multiple images in one tool batch to compare them together. After another successful response, recalled images become references again. Pi may still normalize tool-result images according to the current model's limits.
+4. Original session messages, system updates, and tool declarations remain unchanged. Errors, aborts, output-token limits, and additional user instructions do not mark new images as processed; images since the last successful response remain available for retry. Images are also retained when their source cannot be recovered, tools are disabled, or the model does not support images. The extension bypasses native WebSocket continuation, incremental Messages API threads, and other unverified model interfaces.
 
-No images are uploaded to external storage. The extension does not modify Pi's source code or session-file format, and it does not remove Base64 from persisted session files. Re-examining an older image may require an extra tool call, and trimming a completed turn can affect prompt caching. Recall is restricted to the current session branch; after compaction, a reference ID may no longer be present in the model context even when the original image remains in the session. The omitted-byte statistic counts Base64 characters in the context, not captured network traffic.
+No images are uploaded to external storage. The extension does not modify Pi's source code or session-file format, and it does not remove Base64 from persisted session files. Re-examining a processed image may require an extra tool call, including within the same user turn, and replacing images can affect prompt caching. Recall is restricted to the current session branch; after compaction, a reference ID may no longer be present in the model context even when the original image remains in the session. The omitted-byte statistic counts Base64 characters in the context, not captured network traffic.
 
 ## Single-image size
 
@@ -80,9 +80,11 @@ These are example values, not extension defaults. `maxBytes` measures the Base64
 
 ## Validation
 
-`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies active retrieval and recall, completed-turn trimming, stable duplicate handling, preservation of system/tool updates, and native incremental continuation. These tests do not invoke paid models.
+`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies trimming between model requests within one user turn, repeated reads, explicit recall, multiple pending images, failed-request retention, preservation of system/tool updates, and native incremental continuation. These tests do not invoke paid models or measure visual-answer accuracy.
 
-### Real-model validation (2026-11-27)
+### v0.2.0 real-model validation (2026-11-27)
+
+The measurements in this section are from the tagged v0.2.0 release, which trims images after completed user turns. They do not measure within-turn trimming; that behavior is verified by the local tests above and has not been evaluated with real models.
 
 The latest completed comparisons per model and scenario use full-context SSE requests, empty starting sessions, the same prompts and fixtures, and exact-match scoring. The latest `gpt-6.2-sol` trimmed run uses its hash-verified complete baseline with the same benchmark protocol.
 
@@ -110,7 +112,7 @@ The multi-step workflow uses eight synthetic document images (four target record
 | Historical image verification | 3.88 MiB | 324.01 KiB | **91.8%** |
 | New adjustment record | 7.45 MiB | 1.20 MiB | **83.8%** |
 
-The initial audit retains its acquired images until the task finishes. Subsequent turns avoid repeatedly transmitting historical images; the measured payload includes every additional model request and recall. Sizes are serialized JSON bytes rather than captured network traffic. Results are specific to the completed synthetic scenarios, not estimates of general accuracy, latency, gateway resources, or billing.
+In these v0.2.0 measurements, the initial audit retains its acquired images until the task finishes. Subsequent turns avoid repeatedly transmitting historical images; the measured payload includes every additional model request and recall. Sizes are serialized JSON bytes rather than captured network traffic. Results are specific to the completed synthetic scenarios, not estimates of general accuracy, latency, gateway resources, or billing.
 
 ## License
 
