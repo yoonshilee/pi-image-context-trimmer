@@ -57,7 +57,7 @@ export function indexSourceImages(messages: readonly AgentMessage[]) {
   };
 }
 
-export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean, identify: (image: ImageContent) => string | undefined = imageId, shouldReplace: (messageIndex: number, blockIndex: number, active: boolean) => boolean = () => true) {
+export function projectImages(messages: AgentMessage[], recoverable: (id: string) => boolean, identify: (image: ImageContent) => string | undefined = imageId, shouldReplace: (messageIndex: number, blockIndex: number, active: boolean, mandatory: boolean) => boolean = () => true) {
   let completedThrough = -1;
   let pendingStop = -1;
   // Tool calls do not prove the model has finished using the visual evidence.
@@ -73,6 +73,15 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
   let omittedBase64Bytes = 0;
   const result = messages.slice();
   const includedImages = new Set<string>();
+  const activeImages = new Set<string>();
+  for (let i = completedThrough + 1; i < messages.length; i++) {
+    for (const block of imageBlocks(messages[i]) ?? []) {
+      if (block.type === "image") {
+        const id = identify(block);
+        if (id) activeImages.add(id);
+      }
+    }
+  }
 
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
@@ -89,7 +98,7 @@ export function projectImages(messages: AgentMessage[], recoverable: (id: string
       }
       // The same reference text remains valid when its first visible copy becomes historical.
       const text = `[Image reference ${id}. Use ${RECALL_TOOL} only if not visible.]`;
-      if (block.data.length <= text.length || !recoverable(id) || !shouldReplace(i, j, active)) return block;
+      if (block.data.length <= text.length || !recoverable(id) || !shouldReplace(i, j, active, activeImages.has(id))) return block;
       omittedImages++;
       omittedBase64Bytes += block.data.length;
       return { type: "text" as const, text };

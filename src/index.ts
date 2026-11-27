@@ -3,7 +3,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { Type } from "typebox";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { chooseProjection, type WarmProjection } from "./cache-economics.ts";
+import { chooseProjection, type CacheDecision, type WarmProjection } from "./cache-economics.ts";
 import { thresholdDeferral } from "./compaction.ts";
 import { findImage, indexSourceImages, projectImages, RECALL_TOOL, supportsProjection } from "./image-context.ts";
 import { defaultConfig, emptyStatistics, measureProjection, readTrimConfig, recordProjection, renderStatistics, STATS_ENTRY, type BypassReason, type StatsEntryData, type TrimStatistics } from "./statistics.ts";
@@ -15,10 +15,15 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
   let previous: WarmProjection | undefined;
   let pending: ReturnType<typeof chooseProjection>["snapshot"];
   let sent = false;
+  let pendingDecision: CacheDecision | undefined;
+  let cumulativeDeferredBytes = 0;
   let forceTrim = false;
   let cacheWriteSeen = false;
   let longCacheWriteSeen = false;
-  const resetCache = () => { previous = undefined; pending = undefined; sent = false; forceTrim = false; cacheWriteSeen = false; longCacheWriteSeen = false; };
+  const resetCache = () => {
+    previous = undefined; pending = undefined; pendingDecision = undefined; sent = false;
+    forceTrim = false; cacheWriteSeen = false; longCacheWriteSeen = false; cumulativeDeferredBytes = 0;
+  };
   const createProjection = (messages: AgentMessage[], ctx: ExtensionContext) => {
     let lookup: ReturnType<typeof indexSourceImages> | undefined;
     const ids = new WeakMap<ImageContent, string | undefined>();
@@ -59,7 +64,22 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
     }
   });
   pi.on("agent_start", () => { task ??= emptyStatistics(); });
-  pi.on("before_provider_request", () => { if (pending) sent = true; });
+  pi.on("before_provider_request", () => {
+    // Count an issued logical projection once, not context previews, retries, or cache-warming replays.
+    if (!task || !pending || sent) return;
+    sent = true;
+    const bytes = pendingDecision?.deferredBase64Bytes ?? 0;
+    cumulativeDeferredBytes = bytes > 0 ? cumulativeDeferredBytes + bytes : 0;
+    const decision = pendingDecision;
+    if (decision) forStats(stats => {
+      stats.cacheEvaluations++;
+      if (bytes > 0) stats.cacheDeferrals++;
+      stats.deferredBase64Bytes += bytes;
+      if (decision.reason !== "deferred" && bytes > 0) stats.selectiveProjections++;
+      if (decision.reason === "cumulative bandwidth limit") stats.cumulativeBandwidthForces++;
+      stats.lastCacheDecision = decision;
+    });
+  });
   pi.on("model_select", resetCache);
   pi.on("session_tree", resetCache);
   pi.on("session_compact", event => {
@@ -84,6 +104,7 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
       previous = { ...pending, usage, at: Date.now(), cacheWriteSeen, longCacheWriteSeen };
     } else previous = undefined;
     pending = undefined;
+    pendingDecision = undefined;
     sent = false;
     const tokens = usage.totalTokens;
     if (!Number.isFinite(tokens) || tokens < 0) return;
@@ -118,10 +139,11 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
 
   pi.on("session_before_compact", (event, ctx) => {
     if (!config.compactionGuard || event.reason !== "threshold" || event.willRetry || whyBypassed(ctx) || !ctx.model) return;
-    const raw = ctx.sessionManager.buildSessionProjection().messages;
+    const projection = ctx.sessionManager.buildSessionProjection();
+    const raw = projection.messages;
     const { full } = createProjection(raw, ctx);
     if (!full.omittedImages) return;
-    const assessment = thresholdDeferral(raw, full.messages, event.preparation.tokensBefore, ctx.model.contextWindow, event.preparation.settings.reserveTokens);
+    const assessment = thresholdDeferral(raw, full.messages, event.preparation.tokensBefore, ctx.model.contextWindow, event.preparation.settings.reserveTokens, { projection, branchEntries: event.branchEntries });
     if (!assessment.defer) return;
     forceTrim = true;
     forStats(stats => { stats.deferredCompactions++; });
@@ -130,6 +152,7 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
 
   pi.on("context_with_system", (event, ctx) => {
     pending = undefined;
+    pendingDecision = undefined;
     sent = false;
     const bypass = whyBypassed(ctx);
     if (bypass || !ctx.model) {
@@ -141,14 +164,10 @@ export default function imageContext(pi: ExtensionAPI, options: { codexTransport
     const { full, identify } = createProjection(event.messages, ctx);
     const usage = full.omittedImages && config.cacheAware && previous ? ctx.getContextUsage() : undefined;
     const pressure = forceTrim || (usage?.tokens != null && usage.contextWindow > 0 && usage.tokens >= 0.85 * usage.contextWindow);
-    const { projection, snapshot, decision } = chooseProjection(event.messages, full, identify, previous, ctx.model, config, pressure);
+    const { projection, snapshot, decision } = chooseProjection(event.messages, full, identify, previous, ctx.model, config, pressure, Date.now(), cumulativeDeferredBytes);
     forceTrim = false;
     pending = snapshot;
-    if (decision) forStats(stats => {
-      stats.cacheEvaluations++;
-      if (decision.reason === "deferred") stats.cacheDeferrals++;
-      stats.lastCacheDecision = decision;
-    });
+    pendingDecision = decision;
     const metrics = measureProjection(event.messages, projection);
     forStats(stats => recordProjection(stats, metrics));
     if (projection.omittedImages) return { messages: projection.messages };
