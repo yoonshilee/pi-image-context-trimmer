@@ -2,49 +2,39 @@
 
 English | [简体中文](README_zh.md)
 
-A Pi extension that replaces historical images and exact duplicates with recoverable references, reducing repeated request payloads for stateless model APIs while retaining distinct visual evidence throughout the active user task.
+Reduce repeated Base64 image uploads in Pi without discarding active visual evidence. Historical images become recoverable references when trimming is worthwhile.
 
 ## Installation
 
-Requires a Pi host with `context_with_system` support (tested with Pi 1.6.0). The extension targets stateless vision-capable models using the `openai-completions`, `openai-responses`, and `anthropic-messages` APIs.
+The published npm version is `0.3.0`. This README describes the current source, including unreleased improvements.
 
 ```sh
 pi install npm:pi-image-context-trimmer
 ```
 
-Try the extension from source without modifying global settings:
+Try the latest source without changing global settings:
 
 ```sh
 git clone https://github.com/yoonshilee/pi-image-context-trimmer.git
 cd pi-image-context-trimmer
 npm ci --ignore-scripts
-npm run check
 pi -e ./src/index.ts
 ```
 
-SDK applications can load the extension through `DefaultResourceLoader` and its `additionalExtensionPaths` option. Codex SDK hosts that explicitly use `transport: "sse"` can enable trimming by passing `pi => imageContext(pi, { codexTransport: "sse" })` in `extensionFactories`; this must match the host's SSE configuration. The default CLI does not trim Codex's native `auto` or WebSocket transport. Trimming is disabled when tools are explicitly disabled or `recall_context_image` is unavailable. Applications using only `pi-agent-core`, without the `pi-coding-agent` extension host, must integrate the context transformation and image lookup in `src/image-context.ts` themselves.
+Requires Pi with `context_with_system` (tested with 1.6.0). Supports vision-capable stateless `openai-completions`, `openai-responses`, and `anthropic-messages` APIs. SDK hosts explicitly using `openai-codex-responses` over SSE can load `pi => imageContext(pi, { codexTransport: "sse" })` through `extensionFactories`. Native incremental/WebSocket transports and sessions without the recall tool are bypassed. Core-only hosts must integrate the context transformation and image lookup from `src/image-context.ts` themselves.
 
-## Runtime statistics
+## What it does
 
-After a user task involving images settles, Pi displays a compact, expandable **Image Context Trimmer** card in the conversation. The card records the number of image blocks considered and replaced, the omitted Base64 bytes and reduction rate, and successful image recalls. Expand it with the tool-output expansion shortcut (default `Ctrl+O`) to see reference text size, context projection counts, bypass reasons, Pi-reported input/cache-read/cache-write/output tokens, the latest cache-economic estimate, selective decisions, cumulative cache-deferred Base64, cumulative-budget enforcement, reported cache-read ratio, and native compaction counts and reported summary usage.
+- **Preserve evidence:** keep distinct active-task images; deduplicate exact copies and replace eligible completed-task images with SHA-256 references. `recall_context_image` can restore the original from the current session branch.
+- **Protect cache:** compare ordered content-block prefixes and estimated cache-rebuild costs with future read savings. Trim economical historical suffixes rather than rewriting every image at once, including when projected pricing tiers differ. Inspired by [SoL-Pi](https://github.com/NVlabs/SoL-Pi/blob/097fad0105181dd93003eb4948a0d649a550bfe2/src/sol-pi/extensions/online-context-compact/economics.ts).
+- **Bound traffic:** enforce per-request and cumulative deferred-Base64 budgets; context-window pressure overrides deferral.
+- **Coordinate compaction:** defer automatic threshold compaction when the trimmed context safely fits, without intercepting manual compaction or overflow recovery.
 
-For example, a local two-turn smoke test rendered:
+No external image storage, persistent history edits, or extra summarization requests are introduced. Single-image resizing remains Pi's responsibility (`inputLimits.images.resize`).
 
-```text
-Image Context Trimmer · Task
-Image blocks 1 → 0 · 1 replaced · Base64 omitted 16.17 KiB (100.0%)
-```
+## Configuration & statistics
 
-The card is a native, durable custom session entry rendered with `appendEntry` / `registerEntryRenderer`, not a tool call or a model message. It does not enter the model context or trigger an additional model request. Image blocks and Base64 are counted across context projections, including repeated occurrences of the same image, not unique files or captured network traffic. Reported tokens are observed usage, not estimated token savings. Cache-deferred Base64 is accumulated once per issued logical projection, excluding previews and repeated hooks for the same projection; it is not a wire-traffic measurement.
-
-| Command | Effect |
-|---|---|
-| `/image-context-trimmer status` | Show a cumulative card since the extension was loaded. |
-| `/image-context-trimmer display summary` | Enable automatic task cards (default; `display on` also works). |
-| `/image-context-trimmer display off` | Stop automatic cards; trimming and manual statistics still work. |
-| `/image-context-trimmer on` / `off` | Enable or disable trimming independently of automatic cards. |
-
-Set persistent defaults in `~/.pi/agent/image-context-trimmer.json` (or `image-context-trimmer.json` in your configured Pi agent directory):
+Defaults in `~/.pi/agent/image-context-trimmer.json` (or the configured Pi agent directory):
 
 ```json
 {
@@ -58,113 +48,53 @@ Set persistent defaults in `~/.pi/agent/image-context-trimmer.json` (or `image-c
 }
 ```
 
-Set `display` to `"off"` to disable automatic cards. Slash commands override settings for the loaded session only; they do not edit the configuration file. Existing cards remain in the conversation, while cumulative counters restart on session load. SDK hosts can provide a different `configPath` in the extension factory options.
+`cacheAware: false` or a zero byte budget gives bandwidth-first trimming. The assumed horizon is not a forecast. The cumulative budget resets after eligible history is fully trimmed or the cache/session context changes; the statistics remain cumulative. SDK hosts may override `configPath`.
 
-## How it works
+| Command | Effect |
+|---|---|
+| `/image-context-trimmer status` | Show cumulative statistics since load. |
+| `/image-context-trimmer on` / `off` | Enable/disable trimming. |
+| `/image-context-trimmer display summary` / `display off` | Enable/disable automatic task cards. |
 
-1. New user attachments, tool-result images, and recalled images retain their original Pi image format. Each distinct recoverable image appears once during the active user task; subsequent identical blocks become short references without moving the first visible copy.
-2. A successful final answer followed by a new user message marks the preceding task complete. Larger recoverable images from completed tasks become eligible for concise SHA-256 references; the cache policy may defer a newly eligible replacement. A successful tool call alone does not mark visual evidence as finished: all distinct active-task images remain available for multi-step inspection and comparison.
-3. When exact historical visual details are needed, the model uses `recall_context_image` to retrieve the original from the current session branch. A new attachment or ordinary tool read of the same image also restores its visibility for the active task without requiring a separate recall. If a matching historical copy was deferred, it becomes a reference so that only the active raw image remains. Pi may still normalize tool-result images according to the current model's limits.
-4. Original session messages, system updates, and tool declarations remain unchanged. Errors, aborts, output-token limits, and additional user instructions do not end the active task. Images are retained when their exact source cannot be recovered, tools are disabled, or the model does not support images. Native WebSocket continuation, incremental Messages API threads, and other unverified model interfaces are bypassed.
-
-The current branch's image content is indexed only for a projection involving images, so cloned request blocks can reuse the original image's cached SHA-256 digest. The index is request-scoped and checks exact MIME type and Base64 content; it does not retain images across branches or sessions.
-
-No images are uploaded to external storage. The extension does not modify Pi's source code or session-file format, or remove Base64 from persisted session files. Automatic threshold compaction can be deferred only through Pi's public pre-compaction event, as described below. Re-examining a historical image may require an extra tool call, and replacing images can affect prompt caching. Recall is restricted to the current session branch; after compaction, a reference ID may no longer be present in the model context even when the original image remains in the session. The omitted-byte statistic counts Base64 characters in the context, not captured network traffic.
-
-## Cache-aware trimming and native compaction
-
-The cache-aware policy adapts the break-even idea from [SoL-Pi Online Context Compact](https://github.com/NVlabs/SoL-Pi/blob/097fad0105181dd93003eb4948a0d649a550bfe2/src/sol-pi/extensions/online-context-compact/economics.ts) to recoverable image replacement, which does not require a summarization model call.
-
-When the last successful request reported cached reads or writes within five minutes, the extension compares the projected context that preserves deployed references and mandatory duplicate removal with possible additional historical replacements. User-message prefix comparisons use ordered content blocks, so unchanged text preceding an image can remain part of the estimated warm prefix. Consecutive tool results are treated as a conservative cache boundary because serializers may regroup their text and images.
-
-For every possible earliest historical replacement, the extension estimates the cost of trimming the eligible suffix from that point. At the same input-price tier, the break-even idea is:
-
-- Estimated rebuild cost = newly cold retained tokens × (cold input or cache-write rate − cache-read rate).
-- Estimated future read savings = removed tokens per request × cache-read rate × assumed request horizon.
-- Break-even requests = rebuild cost ÷ per-request read savings.
-
-The actual calculation estimates both retained and trimmed input sizes, applies their respective model catalog pricing tiers and observed cache-write rates, and compares their additional cold-input premiums and future cached-read costs. All rate calculations use per-million-token units. The largest eligible suffix with estimated savings covering its rebuild cost is selected; an expensive early image therefore need not prevent a cheap later image from being trimmed. Already deployed references and active-task duplicate removal remain stable. Neither the decision nor the horizon uses an additional model call. Missing prices, no observed warm-cache evidence, or a stale snapshot falls back to immediate trimming.
-
-| Setting | Default | Effect |
-|---|---:|---|
-| `cacheAware` | `true` | Balance cache rebuild cost against future read savings. Set `false` for immediate bandwidth-first trimming. |
-| `cacheHorizonRequests` | `4` | Assumed future requests including the next request; a positive integer, not a forecast of remaining work. |
-| `maxDeferredBase64Bytes` | `1048576` | Extend the trimmed suffix when retained eligible Base64 would reach this per-request limit. Set `0` to always trim eligible history. |
-| `maxCumulativeDeferredBase64Bytes` | `4194304` | Extend the suffix when cumulative deferred bytes across issued logical projections would exceed this budget. Set `0` to always trim eligible history. |
-| `compactionGuard` | `true` | Allow safe deferral of native threshold compaction. Set `false` to leave native compaction decisions entirely to Pi. |
-
-The cumulative budget resets when an issued projection no longer defers eligible history or when the session, model, or branch changes, native compaction occurs, or trimming is disabled. The statistics card's cumulative byte counter does not reset with the budget. Context pressure (at least 85% of Pi's reported context window or a deferred threshold compaction) overrides economic deferral and trims all eligible history. The extension stores only compact fingerprints and estimates for the last request, not a second copy of its images. A reported cache hit or write is evidence of a potentially warm prefix, not proof of its future state. The displayed costs, token savings, and break-even points are heuristic estimates, not actual charges; serializer behavior and other context transformations may change the real cached prefix. Consecutive decisions are not summed as realized savings.
-
-Pi evaluates native compaction before request-time image trimming. At `session_before_compact`, the extension checks automatic **threshold** compaction against the fully trimmed context and the configured reserve. It follows Pi's projected usage validity rules: usage captured before a context edit or compaction is invalidated, and superseded system prompt updates are not counted repeatedly. When valid reported usage exists, only image reductions in the trailing estimated portion are credited, avoiding double subtraction of historical images. If both estimates retain sufficient headroom (including an extra margin of 10% of the configured reserve), it defers that compaction and forces eligible image trimming on the next request. Otherwise Pi proceeds normally. Manual compaction and overflow recovery are never intercepted. No history is persistently rewritten, and no summary call is added by the extension.
-
-## Single-image size
-
-Pi 1.6.0 supports limiting the resolution, encoded size, and JPEG quality of newly attached images through `inputLimits.images.resize` in a model's configuration or `modelOverrides` in `models.json`. For example, a model used on bandwidth-constrained connections can be configured as follows:
-
-```json
-{
-  "inputLimits": {
-    "images": {
-      "resize": {
-        "maxWidth": 1568,
-        "maxHeight": 1568,
-        "maxBytes": 524288,
-        "jpegQuality": 75
-      }
-    }
-  }
-}
-```
-
-These are example values, not extension defaults. `maxBytes` measures the Base64-encoded size. Pi documents defaults of 2000 × 2000 pixels, 4.5 MiB encoded size, and JPEG quality 80. Resizing can reduce the legibility of text, screenshots, and charts; avoid applying aggressive limits globally without verifying the target visual task. Existing historical images are not automatically re-encoded by this setting.
+Expand the native conversation card with `Ctrl+O` to inspect omitted bytes, image recalls, reported token usage/cache-read ratio, estimated break-even, deferred bytes, and compactions. Cards never enter the model context. Commands apply to the loaded session; they do not edit the config file.
 
 ## Validation
 
-`npm run check` runs type checking and regression tests, including an actual Pi 1.6.0 SDK integration with a scripted local HTTP model. It verifies active-task evidence retention, within-task duplicate suppression, explicit recall and reattachment, exact source matching across cloned contexts, failed-request retention, preservation of system/tool updates, and native incremental continuation. Statistics tests verify task summaries, config and command overrides, file-backed session persistence, and that statistics never enter model requests. These local tests do not invoke paid models or measure visual-answer accuracy.
+`npm run check` passes type checking and 54 unit and Pi SDK integration tests.
 
-### Cache and compaction integration validation (local)
+### Latest real-model comparison
 
-A deterministic prefix-cache simulator behind the actual Pi SDK compares three policies on the same seven requests: a small early image, a long text tool result, a larger late image, and four follow-ups. Exact serialized message prefixes receive simulated cached-read pricing. The larger PNG includes synthetic metadata; this fixture measures transport and simulated input/cache costs, not answer quality or real charges. The all-or-nothing policy at commit `f8550ef` was replayed against this same fixture and retained both images.
+GPT-6.2 Sol, 2026-11-27: a fresh on/off pair using the same four prompts, eight synthetic document images, exact-match scoring, and separate sessions with native compaction disabled. Both trials completed.
 
-| Metric | All-or-nothing / retained | Immediate trimming | Selective trimming |
+| Metric | Without extension | With extension | Change |
 |---|---:|---:|---:|
-| Model requests | 7 | 7 | 7 |
-| Serialized JSON | 1,254,477 B | 489,353 B | **555,237 B** |
-| Simulated input/cache cost | $0.033396 | $0.051823 | **$0.033002** |
+| Request JSON | 18.47 MiB | 6.90 MiB | −62.7% |
+| Base64 payload | 18.40 MiB | 6.82 MiB | −62.9% |
+| Zstd body estimate | 12.94 MiB | 5.15 MiB | −60.2% |
+| Image blocks | 32 | 11 | −65.6% |
+| Reported total tokens | 22,009 | 17,634 | −19.9% |
+| Uncached input tokens | 7,387 | 8,350 | +13.0% |
+| Cache-read tokens | 14,208 | 8,832 | −37.8% |
+| Output tokens | 414 | 452 | +9.2% |
+| Observed elapsed time | 160.9 s | 108.2 s | −32.7% |
+| Estimated catalog cost | $0.020335 | $0.022103 | +8.7% |
+| Model requests | 13 | 13 | — |
+| Correct fields | 19/19 | 19/19 | — |
 
-Selective trimming replaces the late image on all four follow-ups but preserves the expensive early prefix. It reduces serialized JSON by **55.7%** versus the all-or-nothing policy, and simulated input/cache cost by **36.3%** versus immediate trimming, with 13.5% more JSON than immediate trimming.
+Request JSON fell by **62.7%** and total tokens by **19.9%**, with the same accuracy and request count. Neither trial had tool failures; one recall replaced an ordinary read. Uncached input increased, so estimated catalog cost also increased. The estimate uses this run’s catalog rates ($2 input, $0.10 cached read, $10 output per million tokens), not billed cost. Zstd is recomputed at level 3; timing is a single observation. Both economic decisions trimmed rather than deferred; selective deferral and compaction are covered by the SDK checks below.
 
-Actual Pi SDK fixtures also verify that cumulative deferral stops at its configured budget, previews do not consume it, duplicate historical copies are removed on reattachment, and unchanged text before an attachment stays identical. The native threshold guard avoids one extra summary request when the trimmed context fits, including after a persisted context edit invalidates old usage; manual compaction still works. Unit tests cover tier crossing, cache-write evidence, conservative tool-result grouping, and invalidation after native compaction.
+### Cache and compaction checks (local SDK)
 
-### Real-model validation (selective cache-aware source candidate, 2026-11-27)
+Identical seven-request fixture with an early small image, long text, and a later large image:
 
-The four-turn retrieval workflow uses eight synthetic document images (four target records and four distractors), including linked-document auditing, text-only analysis, historical image verification, and retrieval of a new adjustment record. The trimmed runs use their hash-verified complete baselines with the same models, prompts, fixtures, full-context SSE protocol, and exact-match scoring.
-
-| Model | Without extension | With extension | JSON payload reduction | Correct fields (baseline / trimmed) |
-|---|---:|---:|---:|---:|
-| gpt-6.1-sol | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 |
-| gpt-6.2-sol | 18.47 MiB | 6.90 MiB | **62.7%** | 19/19 · 19/19 |
-
-| Metric | GPT-6.1 Sol (baseline → trimmed) | GPT-6.2 Sol (baseline → trimmed) |
+| Policy | JSON bytes | Simulated input/cache cost |
 |---|---:|---:|
-| Image blocks sent | 32 → 11 | 32 → 11 |
-| Correct user turns | 4/4 → 4/4 | 4/4 → 4/4 |
-| Model requests | 13 → 13 | 13 → 13 |
-| Original-image recalls | 0 → 1 | 0 → 1 |
-| Reported total tokens | 21,787 → 17,464 (−19.8%) | 22,109 → 17,660 (−20.1%) |
-| Uncached input tokens | 8,518 → 7,869 | 9,673 → 8,376 |
-| Cache-read tokens | 12,928 → 9,216 | 12,032 → 8,832 |
-| Output tokens | 341 → 379 | 404 → 452 |
+| All-or-nothing / retain both | 1,254,477 | $0.033396 |
+| Immediate trimming | 489,353 | $0.051823 |
+| Selective trimming | **555,237** | **$0.033002** |
 
-| GPT-6.2 Sol user turn | Without extension | With extension | Payload reduction |
-|---|---:|---:|---:|
-| Linked-document audit | 5.37 MiB | 5.37 MiB | −0.06% |
-| Text-only analysis | 1.79 MiB | 6.57 KiB | **99.6%** |
-| Historical image verification | 3.88 MiB | 323.70 KiB | **91.8%** |
-| New adjustment record | 7.45 MiB | 1.20 MiB | **83.8%** |
+Selective trimming reduced JSON by **55.7%** versus all-or-nothing and simulated cost by **36.3%** versus immediate trimming. Separately, the compaction guard reduced two SDK requests to one by avoiding a redundant summary; budget enforcement and reattachment deduplication also passed.
 
-Distinct images remain available during the linked audit, while subsequent turns benefit from historical trimming. All additional model requests and recalls are included in the measured payload. Sizes are serialized JSON bytes, not captured network traffic. Total reported and uncached input tokens decreased in both runs. Each model made two economic trimming decisions and no cache deferrals in this workflow; selective deferral and the native compaction guard are verified separately by the local SDK fixtures above. These results are specific to the tested synthetic workflow; single runs do not establish general accuracy, latency, billing, or gateway resource savings. The source candidate remains unreleased; npm v0.3.0 is unchanged.
-
-## License
+JSON and Base64 are request-context measurements, not network captures. Estimated costs, simulated cache savings, and observed token usage are not billing guarantees. The original images remain in the session; re-examining a historical image may require recall.
 
 [MIT](LICENSE).
