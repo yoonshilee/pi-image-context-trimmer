@@ -6,7 +6,7 @@
 
 ## 安装
 
-已发布的 npm 版本为 `0.3.0`。本文档描述当前源码，包括尚未发布的优化。
+当前发布版本：`0.4.0`。
 
 ```sh
 pi install npm:pi-image-context-trimmer

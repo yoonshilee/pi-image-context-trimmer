@@ -6,7 +6,7 @@ Reduce repeated Base64 image uploads in Pi without discarding active visual evid
 
 ## Installation
 
-The published npm version is `0.3.0`. This README describes the current source, including unreleased improvements.
+Current release: `0.4.0`.
 
 ```sh
 pi install npm:pi-image-context-trimmer
