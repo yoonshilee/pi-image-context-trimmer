@@ -1,0 +1,80 @@
+{
+  "startedAt": "2026-11-26T16-14-38-822Z",
+  "piVersion": "1.6.0",
+  "systemPrompt": "Answer the current question only, using the requested exact four-digit or numeric format without Markdown. Never volunteer other numbers from an image. If a question needs visual details not visible in the current input and an image reference is present, use the available image recall tool before answering. Do not guess from a reference ID.",
+  "paidConfig": {
+    "outputTokenCap": 512,
+    "thinkingLevel": "off",
+    "providerRetries": 0,
+    "agentRetries": 0,
+    "cacheWarming": "off",
+    "timeoutMs": 60000,
+    "maxRequestsPerRound": 3
+  },
+  "fixtures": [
+    {
+      "name": "large",
+      "file": "large.png",
+      "width": 960,
+      "height": 600,
+      "bytes": 925985,
+      "sha256": "93baf7b632659b2d927682d0718e57b3ccad92f1326512b5f6f34e0cf69f013e",
+      "top": "6093",
+      "bottom": "3842"
+    }
+  ],
+  "targets": [
+    "artsapi/kimi-k3.1-pro"
+  ],
+  "trials": [
+    {
+      "provider": "artsapi",
+      "model": "kimi-k3.1-pro",
+      "api": "openai-completions",
+      "fixture": "large",
+      "mode": "baseline",
+      "rounds": [
+        {
+          "name": "initial",
+          "prompt": "Read only the four-digit number in the upper white rectangle. Return exactly that number and do not mention the lower number.",
+          "expected": "6093",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1235534,
+              "imageBlocks": 1,
+              "base64Bytes": 1234648,
+              "startMs": 98,
+              "httpStatus": 200,
+              "headersMs": 22549,
+              "completedMs": 22558,
+              "stopReason": "error",
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0
+              },
+              "toolCalls": [],
+              "toolFailures": 0,
+              "errorStatus": "unknown"
+            }
+          ],
+          "answer": "",
+          "correct": false,
+          "elapsedMs": 22658
+        }
+      ],
+      "extensionErrors": 0,
+      "complete": false,
+      "elapsedMs": 22668
+    }
+  ],
+  "skipped": [
+    {
+      "target": "artsapi/kimi-k3.1-pro",
+      "reason": "Initial paid request failed; remaining trials for this model were not sent"
+    }
+  ]
+}

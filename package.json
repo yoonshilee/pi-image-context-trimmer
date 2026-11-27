@@ -1,0 +1,60 @@
+{
+  "name": "pi-image-context-trimmer",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Reduce repeated image uploads in stateless Pi conversations.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "benchmark:paid": "node benchmark/run-paid.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-agent-core": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.0",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "typebox": "1.3.27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yoonshilee/pi-image-context-trimmer.git"
+  },
+  "homepage": "https://github.com/yoonshilee/pi-image-context-trimmer#readme",
+  "bugs": {
+    "url": "https://github.com/yoonshilee/pi-image-context-trimmer/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "image-context",
+    "context-trimming",
+    "vision"
+  ],
+  "files": [
+    "src",
+    "README_zh.md",
+    "benchmark/results/paid-comparison.svg",
+    "benchmark/results/paid-comparison_zh.svg"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

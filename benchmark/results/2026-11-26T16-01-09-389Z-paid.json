@@ -1,0 +1,532 @@
+{
+  "startedAt": "2026-11-26T16-01-09-389Z",
+  "piVersion": "1.6.0",
+  "systemPrompt": "Answer the current question only, using the requested exact four-digit or numeric format without Markdown. Never volunteer other numbers from an image. If a question needs visual details not visible in the current input and an image reference is present, use the available image recall tool before answering. Do not guess from a reference ID.",
+  "paidConfig": {
+    "outputTokenCap": 512,
+    "thinkingLevel": "off",
+    "providerRetries": 0,
+    "agentRetries": 0,
+    "cacheWarming": "off",
+    "timeoutMs": 60000,
+    "maxRequestsPerRound": 3
+  },
+  "fixtures": [
+    {
+      "name": "small",
+      "file": "small.png",
+      "width": 480,
+      "height": 290,
+      "bytes": 237304,
+      "sha256": "f442e340eed90621adb2cd73c8937d0a9c0d7cd4c67f0303f60e62b83371b98c",
+      "top": "4817",
+      "bottom": "7256"
+    },
+    {
+      "name": "large",
+      "file": "large.png",
+      "width": 960,
+      "height": 600,
+      "bytes": 925985,
+      "sha256": "93baf7b632659b2d927682d0718e57b3ccad92f1326512b5f6f34e0cf69f013e",
+      "top": "6093",
+      "bottom": "3842"
+    }
+  ],
+  "targets": [
+    "mypi-1791976182346/glm-5.3",
+    "artsapi/kimi-k3"
+  ],
+  "trials": [
+    {
+      "provider": "mypi-1791976182346",
+      "model": "glm-5.3",
+      "api": "openai-completions",
+      "fixture": "small",
+      "mode": "baseline",
+      "rounds": [
+        {
+          "name": "initial",
+          "prompt": "Read only the four-digit number in the upper white rectangle. Return exactly that number and do not mention the lower number.",
+          "expected": "4817",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 317263,
+              "imageBlocks": 1,
+              "base64Bytes": 316408,
+              "startMs": 102,
+              "completedMs": 11927,
+              "stopReason": "error",
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0
+              },
+              "toolCalls": [],
+              "toolFailures": 0,
+              "errorStatus": "400"
+            }
+          ],
+          "answer": "",
+          "correct": false,
+          "elapsedMs": 12031
+        }
+      ],
+      "extensionErrors": 0,
+      "complete": false,
+      "elapsedMs": 12040
+    },
+    {
+      "provider": "artsapi",
+      "model": "kimi-k3",
+      "api": "openai-completions",
+      "fixture": "small",
+      "mode": "baseline",
+      "rounds": [
+        {
+          "name": "initial",
+          "prompt": "Read only the four-digit number in the upper white rectangle. Return exactly that number and do not mention the lower number.",
+          "expected": "4817",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 317288,
+              "imageBlocks": 1,
+              "base64Bytes": 316408,
+              "startMs": 31,
+              "httpStatus": 200,
+              "headersMs": 12086,
+              "completedMs": 13510,
+              "stopReason": "stop",
+              "usage": {
+                "input": 181,
+                "output": 59,
+                "cacheRead": 0,
+                "cacheWrite": 256,
+                "reasoning": 47,
+                "totalTokens": 496
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "4817",
+          "correct": true,
+          "elapsedMs": 13541
+        },
+        {
+          "name": "text",
+          "prompt": "Ignore the image for this question. Calculate 17 + 25 and return only the number.",
+          "expected": "42",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 317678,
+              "imageBlocks": 1,
+              "base64Bytes": 316408,
+              "startMs": 2,
+              "httpStatus": 200,
+              "headersMs": 10434,
+              "completedMs": 11058,
+              "stopReason": "stop",
+              "usage": {
+                "input": 24,
+                "output": 44,
+                "cacheRead": 256,
+                "cacheWrite": 256,
+                "reasoning": 33,
+                "totalTokens": 580
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "42",
+          "correct": true,
+          "elapsedMs": 11060
+        },
+        {
+          "name": "recall",
+          "prompt": "Read the four-digit number in the lower white rectangle of the original image. If only an image reference remains, use the available recall tool before answering. Return exactly the four digits.",
+          "expected": "7256",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 318100,
+              "imageBlocks": 1,
+              "base64Bytes": 316408,
+              "startMs": 2,
+              "httpStatus": 200,
+              "headersMs": 8897,
+              "completedMs": 10334,
+              "stopReason": "stop",
+              "usage": {
+                "input": 637,
+                "output": 67,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 55,
+                "totalTokens": 704
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "7256",
+          "correct": true,
+          "elapsedMs": 10336
+        }
+      ],
+      "extensionErrors": 0,
+      "complete": true,
+      "elapsedMs": 34945
+    },
+    {
+      "provider": "artsapi",
+      "model": "kimi-k3",
+      "api": "openai-completions",
+      "fixture": "small",
+      "mode": "trimmed",
+      "rounds": [
+        {
+          "name": "initial",
+          "prompt": "Read only the four-digit number in the upper white rectangle. Return exactly that number and do not mention the lower number.",
+          "expected": "4817",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 317712,
+              "imageBlocks": 1,
+              "base64Bytes": 316408,
+              "startMs": 25,
+              "httpStatus": 200,
+              "headersMs": 10725,
+              "completedMs": 11413,
+              "stopReason": "stop",
+              "usage": {
+                "input": 52,
+                "output": 54,
+                "cacheRead": 0,
+                "cacheWrite": 512,
+                "reasoning": 39,
+                "totalTokens": 618
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "4817",
+          "correct": true,
+          "elapsedMs": 11438
+        },
+        {
+          "name": "text",
+          "prompt": "Ignore the image for this question. Calculate 17 + 25 and return only the number.",
+          "expected": "42",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1849,
+              "imageBlocks": 0,
+              "base64Bytes": 0,
+              "startMs": 2,
+              "httpStatus": 200,
+              "headersMs": 4895,
+              "completedMs": 4896,
+              "stopReason": "stop",
+              "usage": {
+                "input": 7,
+                "output": 39,
+                "cacheRead": 256,
+                "cacheWrite": 256,
+                "reasoning": 28,
+                "totalTokens": 558
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "42",
+          "correct": true,
+          "elapsedMs": 4898
+        },
+        {
+          "name": "recall",
+          "prompt": "Read the four-digit number in the lower white rectangle of the original image. If only an image reference remains, use the available recall tool before answering. Return exactly the four digits.",
+          "expected": "7256",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 2253,
+              "imageBlocks": 0,
+              "base64Bytes": 0,
+              "startMs": 2,
+              "httpStatus": 200,
+              "headersMs": 8762,
+              "completedMs": 11151,
+              "stopReason": "stop",
+              "usage": {
+                "input": 616,
+                "output": 29,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 24,
+                "totalTokens": 645
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "7256",
+          "correct": true,
+          "elapsedMs": 11153
+        }
+      ],
+      "extensionErrors": 0,
+      "complete": true,
+      "elapsedMs": 27591
+    },
+    {
+      "provider": "artsapi",
+      "model": "kimi-k3",
+      "api": "openai-completions",
+      "fixture": "large",
+      "mode": "trimmed",
+      "rounds": [
+        {
+          "name": "initial",
+          "prompt": "Read only the four-digit number in the upper white rectangle. Return exactly that number and do not mention the lower number.",
+          "expected": "6093",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1235952,
+              "imageBlocks": 1,
+              "base64Bytes": 1234648,
+              "startMs": 40,
+              "httpStatus": 200,
+              "headersMs": 12969,
+              "completedMs": 13445,
+              "stopReason": "stop",
+              "usage": {
+                "input": 113,
+                "output": 46,
+                "cacheRead": 1024,
+                "cacheWrite": 0,
+                "reasoning": 34,
+                "totalTokens": 1183
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "6093",
+          "correct": true,
+          "elapsedMs": 13484
+        },
+        {
+          "name": "text",
+          "prompt": "Ignore the image for this question. Calculate 17 + 25 and return only the number.",
+          "expected": "42",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1823,
+              "imageBlocks": 0,
+              "base64Bytes": 0,
+              "startMs": 3,
+              "httpStatus": 200,
+              "headersMs": 3626,
+              "completedMs": 3627,
+              "stopReason": "stop",
+              "usage": {
+                "input": 0,
+                "output": 31,
+                "cacheRead": 256,
+                "cacheWrite": 254,
+                "reasoning": 20,
+                "totalTokens": 541
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "42",
+          "correct": true,
+          "elapsedMs": 3630
+        },
+        {
+          "name": "recall",
+          "prompt": "Read the four-digit number in the lower white rectangle of the original image. If only an image reference remains, use the available recall tool before answering. Return exactly the four digits.",
+          "expected": "3842",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 2187,
+              "imageBlocks": 0,
+              "base64Bytes": 0,
+              "startMs": 3,
+              "httpStatus": 200,
+              "headersMs": 10900,
+              "completedMs": 12570,
+              "stopReason": "toolUse",
+              "usage": {
+                "input": 86,
+                "output": 172,
+                "cacheRead": 512,
+                "cacheWrite": 0,
+                "reasoning": 87,
+                "totalTokens": 770
+              },
+              "toolCalls": [
+                "recall_context_image"
+              ],
+              "toolFailures": 0
+            },
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1237718,
+              "imageBlocks": 1,
+              "base64Bytes": 1234648,
+              "startMs": 12578,
+              "httpStatus": 200,
+              "headersMs": 23593,
+              "completedMs": 23594,
+              "stopReason": "stop",
+              "usage": {
+                "input": 105,
+                "output": 52,
+                "cacheRead": 512,
+                "cacheWrite": 1024,
+                "reasoning": 40,
+                "totalTokens": 1693
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "3842",
+          "correct": true,
+          "elapsedMs": 36173
+        }
+      ],
+      "extensionErrors": 0,
+      "complete": true,
+      "elapsedMs": 53298
+    },
+    {
+      "provider": "artsapi",
+      "model": "kimi-k3",
+      "api": "openai-completions",
+      "fixture": "large",
+      "mode": "baseline",
+      "rounds": [
+        {
+          "name": "initial",
+          "prompt": "Read only the four-digit number in the upper white rectangle. Return exactly that number and do not mention the lower number.",
+          "expected": "6093",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1235528,
+              "imageBlocks": 1,
+              "base64Bytes": 1234648,
+              "startMs": 40,
+              "httpStatus": 200,
+              "headersMs": 7940,
+              "completedMs": 8266,
+              "stopReason": "stop",
+              "usage": {
+                "input": 1010,
+                "output": 60,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "reasoning": 48,
+                "totalTokens": 1070
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "6093",
+          "correct": true,
+          "elapsedMs": 8306
+        },
+        {
+          "name": "text",
+          "prompt": "Ignore the image for this question. Calculate 17 + 25 and return only the number.",
+          "expected": "42",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1235920,
+              "imageBlocks": 1,
+              "base64Bytes": 1234648,
+              "startMs": 4,
+              "httpStatus": 200,
+              "headersMs": 17551,
+              "completedMs": 17552,
+              "stopReason": "stop",
+              "usage": {
+                "input": 86,
+                "output": 45,
+                "cacheRead": 0,
+                "cacheWrite": 1024,
+                "reasoning": 34,
+                "totalTokens": 1155
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "42",
+          "correct": true,
+          "elapsedMs": 17556
+        },
+        {
+          "name": "recall",
+          "prompt": "Read the four-digit number in the lower white rectangle of the original image. If only an image reference remains, use the available recall tool before answering. Return exactly the four digits.",
+          "expected": "3842",
+          "requests": [
+            {
+              "maxOutputTokens": 512,
+              "jsonBytes": 1236342,
+              "imageBlocks": 1,
+              "base64Bytes": 1234648,
+              "startMs": 5,
+              "httpStatus": 200,
+              "headersMs": 23497,
+              "completedMs": 23693,
+              "stopReason": "stop",
+              "usage": {
+                "input": 188,
+                "output": 73,
+                "cacheRead": 1024,
+                "cacheWrite": 0,
+                "reasoning": 61,
+                "totalTokens": 1285
+              },
+              "toolCalls": [],
+              "toolFailures": 0
+            }
+          ],
+          "answer": "3842",
+          "correct": true,
+          "elapsedMs": 23697
+        }
+      ],
+      "extensionErrors": 0,
+      "complete": true,
+      "elapsedMs": 49567
+    }
+  ],
+  "skipped": [
+    {
+      "target": "mypi-1791976182346/glm-5.3",
+      "reason": "Initial paid request failed; remaining trials for this model were not sent"
+    }
+  ]
+}
