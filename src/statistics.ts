@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { EntryRenderer } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { defaultCachePolicy, type CacheDecision, type CachePolicy } from "./cache-economics.ts";
 
 export const STATS_ENTRY = "image-context-trimmer-statistics";
 export type DisplayMode = "summary" | "off";
-export interface TrimConfig { enabled: boolean; display: DisplayMode }
-export const defaultConfig: TrimConfig = { enabled: true, display: "summary" };
+export interface TrimConfig extends CachePolicy { enabled: boolean; display: DisplayMode; compactionGuard: boolean }
+export const defaultConfig: TrimConfig = { enabled: true, display: "summary", ...defaultCachePolicy, compactionGuard: true };
 
 export function readTrimConfig(path: string): TrimConfig {
   let data: unknown;
@@ -17,10 +18,16 @@ export function readTrimConfig(path: string): TrimConfig {
     throw error;
   }
   if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error("Expected a configuration object.");
-  const { enabled, display } = data as Partial<TrimConfig>;
+  const { enabled, display, cacheAware, cacheHorizonRequests, maxDeferredBase64Bytes, compactionGuard } = data as Partial<TrimConfig>;
   if (enabled !== undefined && typeof enabled !== "boolean") throw new Error("enabled must be a boolean.");
   if (display !== undefined && display !== "summary" && display !== "off") throw new Error("display must be summary or off.");
-  return { enabled: enabled ?? defaultConfig.enabled, display: display ?? defaultConfig.display };
+  if (cacheAware !== undefined && typeof cacheAware !== "boolean") throw new Error("cacheAware must be a boolean.");
+  if (compactionGuard !== undefined && typeof compactionGuard !== "boolean") throw new Error("compactionGuard must be a boolean.");
+  if (cacheHorizonRequests !== undefined && (!Number.isSafeInteger(cacheHorizonRequests) || cacheHorizonRequests < 1)) throw new Error("cacheHorizonRequests must be a positive integer.");
+  if (maxDeferredBase64Bytes !== undefined && (!Number.isSafeInteger(maxDeferredBase64Bytes) || maxDeferredBase64Bytes < 0)) throw new Error("maxDeferredBase64Bytes must be a non-negative integer.");
+  return { enabled: enabled ?? defaultConfig.enabled, display: display ?? defaultConfig.display,
+    cacheAware: cacheAware ?? defaultConfig.cacheAware, cacheHorizonRequests: cacheHorizonRequests ?? defaultConfig.cacheHorizonRequests,
+    maxDeferredBase64Bytes: maxDeferredBase64Bytes ?? defaultConfig.maxDeferredBase64Bytes, compactionGuard: compactionGuard ?? defaultConfig.compactionGuard };
 }
 
 export interface ProjectionMetrics {
@@ -62,10 +69,21 @@ export interface TrimStatistics extends ProjectionMetrics {
   successfulRecalls: number;
   reportedTokens: number;
   reportedResponses: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  cacheEvaluations: number;
+  cacheDeferrals: number;
+  deferredCompactions: number;
+  nativeCompactions: number;
+  nativeCompactionTokens: number;
+  nativeCompactionUsageRecords: number;
+  lastCacheDecision?: CacheDecision;
 }
 
 export function emptyStatistics(): TrimStatistics {
-  return { imageBlocks: 0, imageBase64Bytes: 0, omittedImages: 0, omittedBase64Bytes: 0, referenceBytes: 0, eligibleProjections: 0, optimizedProjections: 0, bypassedProjections: 0, bypassReasons: {}, recallAttempts: 0, successfulRecalls: 0, reportedTokens: 0, reportedResponses: 0 };
+  return { imageBlocks: 0, imageBase64Bytes: 0, omittedImages: 0, omittedBase64Bytes: 0, referenceBytes: 0, eligibleProjections: 0, optimizedProjections: 0, bypassedProjections: 0, bypassReasons: {}, recallAttempts: 0, successfulRecalls: 0, reportedTokens: 0, reportedResponses: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, cacheEvaluations: 0, cacheDeferrals: 0, deferredCompactions: 0, nativeCompactions: 0, nativeCompactionTokens: 0, nativeCompactionUsageRecords: 0 };
 }
 
 export function recordProjection(stats: TrimStatistics, metrics: ProjectionMetrics, bypass?: BypassReason): void {
@@ -107,12 +125,23 @@ export const renderStatistics: EntryRenderer<StatsEntryData> = (entry, { expande
   const reasons = Object.entries(s.bypassReasons).map(([reason, count]) => `${reason} (${count})`).join(", ");
   if (data.bypass || reasons) box.addChild(new Text(theme.fg("dim", `Bypass: ${data.bypass ?? reasons}`), 0, 0));
   else if (s.imageBlocks > 0 && s.omittedImages === 0) box.addChild(new Text(theme.fg("dim", "No image blocks replaced; existing images retained."), 0, 0));
+  if (s.cacheEvaluations) box.addChild(new Text(`Cache economics: ${s.cacheDeferrals}/${s.cacheEvaluations} decisions deferred`, 0, 0));
+  if (s.deferredCompactions) box.addChild(new Text(`Native threshold compactions deferred: ${s.deferredCompactions}`, 0, 0));
   if (expanded) {
+    const decision = s.lastCacheDecision;
+
     box.addChild(new Text([
       `Base64 in image context: ${formatBytes(s.imageBase64Bytes)} → ${formatBytes(s.imageBase64Bytes - s.omittedBase64Bytes)}`,
       `Replacement text: ${formatBytes(s.referenceBytes)} · net content omitted: ${formatBytes(s.omittedBase64Bytes - s.referenceBytes)}`,
       `Projections: ${s.eligibleProjections} eligible · ${s.optimizedProjections} optimized · ${s.bypassedProjections} bypassed`,
       `Pi-reported total tokens: ${s.reportedResponses ? s.reportedTokens.toLocaleString("en-US") : "n/a"} (not tokens saved)`,
+      ...(s.nativeCompactions !== undefined && s.nativeCompactions > 0 ? [`Native compactions completed: ${s.nativeCompactions} · summary tokens: ${s.nativeCompactionUsageRecords ? s.nativeCompactionTokens.toLocaleString("en-US") : "n/a"} (${s.nativeCompactionUsageRecords} with reported usage)`] : []),
+      ...(s.inputTokens !== undefined ? [`Input ${s.inputTokens.toLocaleString("en-US")} · cache read ${s.cacheReadTokens.toLocaleString("en-US")} · cache write ${s.cacheWriteTokens.toLocaleString("en-US")} · output ${s.outputTokens.toLocaleString("en-US")}`] : []),
+      ...(decision ? [`Latest cache decision: ${decision.reason} · horizon ${decision.horizonRequests} requests`,
+        `Estimated retained cache tokens invalidated: ${decision.invalidatedRetainedTokens} · saved/request: ${decision.savedTokensPerRequest}`,
+        `Estimated rewrite cost: ${decision.estimatedRewriteCost === undefined ? "n/a" : "$" + decision.estimatedRewriteCost.toFixed(6)} · projected read savings: ${decision.estimatedReadSavings === undefined ? "n/a" : "$" + decision.estimatedReadSavings.toFixed(6)} · break-even: ${decision.breakEvenRequests === undefined ? "n/a" : decision.breakEvenRequests.toFixed(1) + " requests"}`,
+        `Deferred Base64 for latest decision: ${formatBytes(decision.deferredBase64Bytes)} (catalog estimates, not billing)`] : []),
+      ...(data.config.cacheAware !== undefined ? [`Cache-aware: ${data.config.cacheAware ? "on" : "off"} · horizon ${data.config.cacheHorizonRequests} requests · deferred-byte limit ${formatBytes(data.config.maxDeferredBase64Bytes)} · compaction guard: ${data.config.compactionGuard ? "on" : "off"}`] : []),
       ...(data.scope === "task" ? [`Trimming: ${data.config.enabled ? "on" : "off"} · Auto display: ${data.config.display}`] : []),
       "Context measurements, not network traffic or billing.",
     ].join("\n"), 0, 0));

@@ -114,7 +114,7 @@ test("duplicate pending tool images do not rewrite the first visible copy", () =
   const projected = projectImages([...history, result(image, "repeat")], () => true);
   assert.deepEqual(projected.messages.slice(0, history.length), previous);
   assert.equal(countImages(projected.messages), 1);
-  assert.match(JSON.stringify(projected.messages.at(-1)), /already included earlier/i);
+  assert.match(JSON.stringify(projected.messages.at(-1)), /only if not visible/i);
 });
 
 test("image IDs reuse digests without returning stale hashes for changed content", t => {

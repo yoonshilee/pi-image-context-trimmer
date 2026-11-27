@@ -6,25 +6,47 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type Theme } from "@earendil-works/pi-coding-agent";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, type ImageContent, type Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import imageContext from "../src/index.ts";
 import { imageId, RECALL_TOOL } from "../src/image-context.ts";
-import { readTrimConfig, renderStatistics, STATS_ENTRY, type StatsEntryData, type TrimConfig } from "../src/statistics.ts";
+import { defaultConfig, readTrimConfig, renderStatistics, STATS_ENTRY, type StatsEntryData, type TrimConfig } from "../src/statistics.ts";
 
 const image: ImageContent = { type: "image", mimeType: "image/png", data: (await readFile(new URL("./fixture.png", import.meta.url))).toString("base64") };
 const imageCount = (body: string) => body.split(image.data).length - 1;
 
-async function setup(t: TestContext, config?: TrimConfig, recall = false) {
+async function setup(t: TestContext, config?: Partial<TrimConfig>, recall = false, options: {
+  warm?: boolean; seed?: Parameters<SessionManager["appendMessage"]>[0][]; contextWindow?: number; reserveTokens?: number;
+} = {}) {
   const bodies: string[] = [];
+  let previousPrefix: { key: string; tokens: number }[] = [];
+  const simulatedUsage: { input: number; cached: number }[] = [];
+  const simulateCache = (body: string) => {
+    const payload = JSON.parse(body);
+    const messages = [payload.tools ?? [], ...payload.messages].map(message => {
+      const key = JSON.stringify(message);
+      let images = 0;
+      const text = key.replace(/data:image\/[^;"\s]+;base64,[A-Za-z0-9+/=]+/g, () => { images++; return "[image]"; });
+      return { key, tokens: Math.ceil(text.length / 4) + images * 1200 };
+    });
+    let shared = 0;
+    while (shared < previousPrefix.length && shared < messages.length && previousPrefix[shared].key === messages[shared].key) shared++;
+    const promptTokens = messages.reduce((sum, message) => sum + message.tokens, 0);
+    const cached = messages.slice(0, shared).reduce((sum, message) => sum + message.tokens, 0);
+    previousPrefix = messages;
+    simulatedUsage.push({ input: promptTokens - cached, cached });
+    return { prompt_tokens: promptTokens, prompt_tokens_details: { cached_tokens: cached }, completion_tokens: 2, total_tokens: promptTokens + 2 };
+  };
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     bodies.push(Buffer.concat(chunks).toString("utf8"));
     const shouldRecall = recall && bodies.length === 2;
-    const delta = shouldRecall ? { role: "assistant", tool_calls: [{ index: 0, id: "stats-recall", type: "function", function: { name: RECALL_TOOL, arguments: JSON.stringify({ id: imageId(image) }) } }] } : { role: "assistant", content: "Done." };
+    const longTool = options.warm && bodies.length === 1;
+    const delta = longTool ? { role: "assistant", tool_calls: [{ index: 0, id: "long-result", type: "function", function: { name: "long_result", arguments: "{}" } }] } : shouldRecall ? { role: "assistant", tool_calls: [{ index: 0, id: "stats-recall", type: "function", function: { name: RECALL_TOOL, arguments: JSON.stringify({ id: imageId(image) }) } }] } : { role: "assistant", content: "Done." };
     const frame = (choices: object[], usage?: object) => `data: ${JSON.stringify({ id: `stats-${bodies.length}`, object: "chat.completion.chunk", created: 1, model: "fixture", choices, usage })}\n\n`;
     res.writeHead(200, { "content-type": "text/event-stream" });
-    res.end(frame([{ index: 0, delta, finish_reason: null }]) + frame([{ index: 0, delta: {}, finish_reason: shouldRecall ? "tool_calls" : "stop" }]) + frame([], { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 }) + "data: [DONE]\n\n");
+    res.end(frame([{ index: 0, delta, finish_reason: null }]) + frame([{ index: 0, delta: {}, finish_reason: shouldRecall || longTool ? "tool_calls" : "stop" }]) + frame([], options.warm ? simulateCache(bodies.at(-1)!) : { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 }) + "data: [DONE]\n\n");
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -36,22 +58,25 @@ async function setup(t: TestContext, config?: TrimConfig, recall = false) {
   if (config) await writeFile(configPath, JSON.stringify(config));
   const model: Model<"openai-completions"> = {
     id: "fixture", name: "Fixture", provider: "image-stats-test", baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, api: "openai-completions", input: ["text", "image"], reasoning: false,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096,
+    cost: options.warm ? { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: options.contextWindow ?? 128000, maxTokens: 4096,
   };
-  const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off" });
+  const settings = SettingsManager.inMemory({ compaction: options.reserveTokens === undefined ? { enabled: false } : { enabled: true, reserveTokens: options.reserveTokens, keepRecentTokens: 100 }, retry: { enabled: false }, cacheWarming: "off" });
   const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager: settings, noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
-    extensionFactories: [pi => pi.registerProvider(model.provider, { baseUrl: model.baseUrl, api: model.api, apiKey: "local-fixture", models: [model] }), pi => imageContext(pi, { configPath })] });
+    extensionFactories: [pi => pi.registerProvider(model.provider, { baseUrl: model.baseUrl, api: model.api, apiKey: "local-fixture", models: [model] }),
+      ...(options.warm ? [(pi: import("@earendil-works/pi-coding-agent").ExtensionAPI) => pi.registerTool({ name: "long_result", label: "Long result", description: "Return a text result.", parameters: Type.Object({}), async execute() { return { content: [{ type: "text", text: "warm cache evidence ".repeat(2000) }], details: {} }; } })] : []), pi => imageContext(pi, { configPath })] });
   await loader.reload();
   assert.deepEqual(loader.getExtensions().errors, []);
   assert(loader.getExtensions().extensions.some(ext => ext.entryRenderers?.has(STATS_ENTRY)));
   const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false });
-  const { session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.create(cwd, join(agentDir, "sessions")), noTools: "builtin" });
+  const manager = SessionManager.create(cwd, join(agentDir, "sessions"));
+  for (const message of options.seed ?? []) manager.appendMessage(message);
+  const { session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, resourceLoader: loader, settingsManager: settings, sessionManager: manager, noTools: "builtin" });
   t.after(() => session.dispose());
   const errors: string[] = [];
   await session.bindExtensions({ onError: error => errors.push(error.error) });
   t.after(() => assert.deepEqual(errors, []));
   const entries = () => session.sessionManager.getBranch().flatMap(entry => entry.type === "custom" && entry.customType === STATS_ENTRY ? [{ ...entry, data: entry.data as StatsEntryData }] : []);
-  return { session, bodies, entries, configPath };
+  return { session, bodies, entries, configPath, simulatedUsage };
 }
 
 test("settled tasks render durable cards, report recalls and token usage without entering model context", async t => {
@@ -115,7 +140,7 @@ test("configuration and display commands control cards independently of trimming
   await session.prompt("Finish");
   assert.equal(entries().length, 2);
   assert.deepEqual(bodies.map(imageCount), [1, 0, 0, 0]);
-  assert.deepEqual(readTrimConfig(configPath), { enabled: true, display: "off" }, "slash commands change only current session");
+  assert.deepEqual(readTrimConfig(configPath), { ...defaultConfig, display: "off" }, "slash commands change only current session");
 });
 
 test("disabled trimming emits an explanatory card only when images are relevant", async t => {
@@ -139,13 +164,19 @@ test("configuration validates display mode and enable flag", async t => {
   const cwd = await mkdtemp(join(tmpdir(), "pi-image-stats-config-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const file = join(cwd, "image-context-trimmer.json");
-  assert.deepEqual(readTrimConfig(file), { enabled: true, display: "summary" });
+  assert.deepEqual(readTrimConfig(file), defaultConfig);
   await writeFile(file, '{"enabled":false}');
-  assert.deepEqual(readTrimConfig(file), { enabled: false, display: "summary" });
+  assert.deepEqual(readTrimConfig(file), { ...defaultConfig, enabled: false });
   await writeFile(file, '{"enabled":"false"}');
   assert.throws(() => readTrimConfig(file), /enabled must be a boolean/);
   await writeFile(file, '{"display":"live"}');
   assert.throws(() => readTrimConfig(file), /display must be summary or off/);
+  await writeFile(file, '{"cacheHorizonRequests":0}');
+  assert.throws(() => readTrimConfig(file), /positive integer/);
+  await writeFile(file, '{"maxDeferredBase64Bytes":-1}');
+  assert.throws(() => readTrimConfig(file), /non-negative integer/);
+  await writeFile(file, '{"cacheAware":false,"compactionGuard":false,"cacheHorizonRequests":8,"maxDeferredBase64Bytes":0}');
+  assert.deepEqual(readTrimConfig(file), { ...defaultConfig, cacheAware: false, compactionGuard: false, cacheHorizonRequests: 8, maxDeferredBase64Bytes: 0 });
 });
 
 test("a new attachment of a historical image remains visible without an explicit recall", async t => {
@@ -158,4 +189,73 @@ test("a new attachment of a historical image remains visible without an explicit
   assert.equal(entries().at(-1)!.data.stats.recallAttempts, 0);
   await session.prompt("Continue without images");
   assert.deepEqual(bodies.map(imageCount), [1, 1, 0]);
+});
+
+
+test("warm-cache deferral preserves a small historical image in the actual SDK request and reports economics", async t => {
+  const { session, bodies, entries } = await setup(t, undefined, false, { warm: true });
+  await session.prompt("Inspect this image and collect the long result", { images: [image] });
+  assert.equal(bodies.length, 2);
+  await session.prompt("Continue with the text result");
+  assert.deepEqual(bodies.map(imageCount), [1, 1, 1]);
+  const stats = entries().at(-1)!.data.stats;
+  assert.equal(stats.cacheDeferrals, 1);
+  assert.equal(stats.lastCacheDecision?.reason, "deferred");
+  assert(stats.lastCacheDecision!.estimatedRewriteCost! > stats.lastCacheDecision!.estimatedReadSavings!);
+  assert(stats.cacheReadTokens > 0);
+  const theme = { bg: (_name: string, value: string) => value, fg: (_name: string, value: string) => value } as Theme;
+  const rendered = renderStatistics(entries().at(-1)!, { expanded: true, keyHint: () => "", keyText: () => "" }, theme)!.render(110).join("\n");
+  assert(rendered.includes("Latest cache decision: deferred"));
+  assert(rendered.includes("Estimated rewrite cost:"));
+  assert(rendered.includes("break-even:"));
+});
+
+test("bandwidth limit forces a trim despite a warm cache", async t => {
+  const { session, bodies, entries } = await setup(t, { maxDeferredBase64Bytes: 0 }, false, { warm: true });
+  await session.prompt("Inspect and collect the result", { images: [image] });
+  await session.prompt("Continue");
+  assert.deepEqual(bodies.map(imageCount), [1, 1, 0]);
+  assert.equal(entries().at(-1)!.data.stats.lastCacheDecision?.reason, "bandwidth limit");
+});
+
+test("Pi threshold compaction is deferred when historical image trimming restores headroom; manual compaction remains available", async t => {
+  const seed = Array.from({ length: 4 }, (_, i) => [
+    { role: "user", timestamp: i * 2 + 1, content: [{ ...image }] },
+    { ...fauxAssistantMessage("Done."), timestamp: i * 2 + 2, stopReason: "stop" },
+  ]).flat() as Parameters<SessionManager["appendMessage"]>[0][];
+  const withoutGuard = await setup(t, { compactionGuard: false }, false, { seed, contextWindow: 2400, reserveTokens: 500 });
+  await withoutGuard.session.prompt("Continue without images");
+  assert.equal(withoutGuard.bodies.length, 2, "native compaction makes one summary request and one normal request");
+  assert(withoutGuard.session.sessionManager.getBranch().some(entry => entry.type === "compaction"));
+  const { session, bodies, entries } = await setup(t, undefined, false, { seed, contextWindow: 2400, reserveTokens: 500 });
+  await session.prompt("Continue without images");
+  assert.equal(bodies.length, 1, "no extra summary provider request");
+  assert.equal(imageCount(bodies[0]), 0);
+  assert.equal(session.sessionManager.getBranch().filter(entry => entry.type === "compaction").length, 0);
+  await session.prompt("/image-context-trimmer status");
+  assert(entries().at(-1)!.data.stats.deferredCompactions >= 1);
+  await session.compact();
+  assert.equal(session.sessionManager.getBranch().filter(entry => entry.type === "compaction").length, 1);
+  await session.prompt("/image-context-trimmer status");
+  assert.equal(entries().at(-1)!.data.stats.nativeCompactions, 1);
+  assert.equal(entries().at(-1)!.data.stats.nativeCompactionUsageRecords, 1);
+  assert(entries().at(-1)!.data.stats.nativeCompactionTokens > 0);
+});
+
+
+test("cache-aware policy reduces simulated prefix-rebuild cost at the expense of bounded small-image traffic", async t => {
+  const balanced = await setup(t, undefined, false, { warm: true });
+  const immediate = await setup(t, { cacheAware: false }, false, { warm: true });
+  for (const trial of [balanced, immediate]) {
+    await trial.session.prompt("Inspect and collect the result", { images: [image] });
+    for (let i = 0; i < 3; i++) await trial.session.prompt(`Text-only follow-up ${i}`);
+    assert.equal(trial.bodies.length, 5);
+  }
+  assert.deepEqual(balanced.bodies.map(imageCount), [1, 1, 1, 1, 1]);
+  assert.deepEqual(immediate.bodies.map(imageCount), [1, 1, 0, 0, 0]);
+  const cost = (trial: typeof balanced) => trial.simulatedUsage.reduce((sum, usage) => sum + (2 * usage.input + 0.1 * usage.cached) / 1e6, 0);
+  const bytes = (trial: typeof balanced) => trial.bodies.reduce((sum, body) => sum + Buffer.byteLength(body), 0);
+  assert(cost(balanced) < cost(immediate));
+  assert(bytes(balanced) > bytes(immediate));
+  console.log(`Synthetic prefix-cache scenario: immediate $${cost(immediate).toFixed(6)} / ${bytes(immediate)} B; balanced $${cost(balanced).toFixed(6)} / ${bytes(balanced)} B (simulated input/cache cost, not billing).`);
 });
