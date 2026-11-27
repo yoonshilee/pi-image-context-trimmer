@@ -22,9 +22,31 @@ npm run check
 pi -e ./src/index.ts
 ```
 
-交互界面中输入 `/image-context-trimmer status` 查看本会话的适用状态、替换次数和省略的 Base64 体积；`/image-context-trimmer off` 恢复未经本扩展裁剪的请求，`/image-context-trimmer on` 重新开启。
-
 SDK 可通过 `DefaultResourceLoader` 的 `additionalExtensionPaths` 加载扩展。对于明确使用 `transport: "sse"` 的 Codex SDK 宿主，可在 `extensionFactories` 中使用 `pi => imageContext(pi, { codexTransport: "sse" })` 显式开启裁剪；必须与宿主的 SSE 配置一致。默认 CLI 不裁剪 Codex 的原生 `auto` / WebSocket 路径。如果调用方明确禁用了工具或没有启用 `recall_context_image`，扩展不裁剪图片。只使用 `pi-agent-core`（没有 `pi-coding-agent` 扩展宿主）的程序需要自行接入 `src/image-context.ts` 的请求上下文转换与图片查找逻辑。
+
+## 运行统计
+
+涉及图片的用户任务结束后，Pi 在对话中展示可展开的 **Image Context Trimmer** 统计卡片。卡片记录参与处理的图片块数量、替换数量、省略的 Base64 体积及减少率，以及成功恢复原图的次数。使用展开工具输出的快捷键（默认 `Ctrl+O`）可查看引用文本大小、上下文转换次数、跳过裁剪的原因和 Pi 报告的助手回复 Token 用量。
+
+卡片通过 `appendEntry` / `registerEntryRenderer` 实现，是 Pi 原生的持久化自定义会话条目，而不是工具调用或模型消息。统计内容不进入模型上下文，也不触发额外模型请求。图片块和 Base64 按每次上下文转换累计，同一图片重复出现会重复计数，并非不同文件数量或网络抓包结果。Token 为已观测到的用量，不代表节省的 Token 数量。
+
+| 命令 | 效果 |
+|---|---|
+| `/image-context-trimmer status` | 展示自扩展加载以来的累计统计卡片。 |
+| `/image-context-trimmer display summary` | 启用自动任务卡片（默认；也支持 `display on`）。 |
+| `/image-context-trimmer display off` | 停止自动卡片，不影响图片裁剪和手动统计。 |
+| `/image-context-trimmer on` / `off` | 独立开启或关闭图片裁剪。 |
+
+在 `~/.pi/agent/image-context-trimmer.json`（或已配置的 Pi Agent 目录下的同名文件）中设置持久化默认配置：
+
+```json
+{
+  "enabled": true,
+  "display": "summary"
+}
+```
+
+将 `display` 设置为 `"off"` 可关闭自动卡片。命令仅覆盖当前加载会话的设置，不修改配置文件。历史卡片仍保留在对话中，累计计数在加载会话时重新开始。SDK 宿主可在扩展工厂选项中指定 `configPath`。
 
 ## 请求处理
 

@@ -5,12 +5,12 @@ import type { AddressInfo } from "node:net";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { normalizeContext, type AssistantMessage, type ImageContent, type Model } from "@earendil-works/pi-ai";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { stream as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
+import imageContext from "../src/index.ts";
 import { imageId, projectImages, RECALL_TOOL, supportsProjection } from "../src/image-context.ts";
 
 const image: ImageContent = { type: "image", mimeType: "image/png", data: (await readFile(new URL("./fixture.png", import.meta.url))).toString("base64") };
@@ -42,8 +42,7 @@ async function runSession(t: TestContext, optimize: boolean, recallImage = false
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off" });
   const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager,
     noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
-    additionalExtensionPaths: optimize ? [fileURLToPath(new URL("../src/index.ts", import.meta.url))] : [],
-    extensionFactories: [pi => pi.registerProvider(localModel.provider, { baseUrl: localModel.baseUrl, api: localModel.api, apiKey: "local-fixture", models: [localModel] })],
+    extensionFactories: [pi => pi.registerProvider(localModel.provider, { baseUrl: localModel.baseUrl, api: localModel.api, apiKey: "local-fixture", models: [localModel] }), ...(optimize ? [(pi: ExtensionAPI) => imageContext(pi, { configPath: join(agentDir, "image-context-trimmer.json") })] : [])],
   });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);

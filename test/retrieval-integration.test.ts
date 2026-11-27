@@ -57,7 +57,7 @@ async function run(t: TestContext, trimmed: boolean, limit?: number) {
   const trace: RetrievalEvent[] = [];
   const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false, provider: { maxRetries: 0 } }, cacheWarming: "off" });
   const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager: settings, systemPrompt: "Audit the visual register.", noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
-    extensionFactories: [pi => pi.registerProvider(model.provider, { baseUrl: model.baseUrl, api: model.api, apiKey: "local-fixture", models: [model] }), retrievalTools(corpus.documents, images, event => trace.push(event)), ...(trimmed ? [(pi: ExtensionAPI) => imageContext(pi)] : [])] });
+    extensionFactories: [pi => pi.registerProvider(model.provider, { baseUrl: model.baseUrl, api: model.api, apiKey: "local-fixture", models: [model] }), retrievalTools(corpus.documents, images, event => trace.push(event)), ...(trimmed ? [(pi: ExtensionAPI) => imageContext(pi, { configPath: join(agentDir, "image-context-trimmer.json") })] : [])] });
   await loader.reload(); assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false });
   const { session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.inMemory(cwd), noTools: "builtin" });

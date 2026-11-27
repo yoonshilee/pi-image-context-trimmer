@@ -22,9 +22,31 @@ npm run check
 pi -e ./src/index.ts
 ```
 
-In Pi's interactive interface, use `/image-context-trimmer status` to view eligibility, replacement counts, and omitted Base64 bytes for the current session. Use `/image-context-trimmer off` to restore untrimmed requests and `/image-context-trimmer on` to enable trimming again.
-
 SDK applications can load the extension through `DefaultResourceLoader` and its `additionalExtensionPaths` option. Codex SDK hosts that explicitly use `transport: "sse"` can enable trimming by passing `pi => imageContext(pi, { codexTransport: "sse" })` in `extensionFactories`; this must match the host's SSE configuration. The default CLI does not trim Codex's native `auto` or WebSocket transport. Trimming is disabled when tools are explicitly disabled or `recall_context_image` is unavailable. Applications using only `pi-agent-core`, without the `pi-coding-agent` extension host, must integrate the context transformation and image lookup in `src/image-context.ts` themselves.
+
+## Runtime statistics
+
+After a user task involving images settles, Pi displays a compact, expandable **Image Context Trimmer** card in the conversation. The card records the number of image blocks considered and replaced, the omitted Base64 bytes and reduction rate, and successful image recalls. Expand it with the tool-output expansion shortcut (default `Ctrl+O`) to see reference text size, context projection counts, bypass reasons, and Pi-reported assistant-response token usage.
+
+The card is a native, durable custom session entry rendered with `appendEntry` / `registerEntryRenderer`, not a tool call or a model message. It does not enter the model context or trigger an additional model request. Image blocks and Base64 are counted across context projections, including repeated occurrences of the same image, not unique files or captured network traffic. Reported tokens are observed usage, not estimated token savings.
+
+| Command | Effect |
+|---|---|
+| `/image-context-trimmer status` | Show a cumulative card since the extension was loaded. |
+| `/image-context-trimmer display summary` | Enable automatic task cards (default; `display on` also works). |
+| `/image-context-trimmer display off` | Stop automatic cards; trimming and manual statistics still work. |
+| `/image-context-trimmer on` / `off` | Enable or disable trimming independently of automatic cards. |
+
+Set persistent defaults in `~/.pi/agent/image-context-trimmer.json` (or `image-context-trimmer.json` in your configured Pi agent directory):
+
+```json
+{
+  "enabled": true,
+  "display": "summary"
+}
+```
+
+Set `display` to `"off"` to disable automatic cards. Slash commands override settings for the loaded session only; they do not edit the configuration file. Existing cards remain in the conversation, while cumulative counters restart on session load. SDK hosts can provide a different `configPath` in the extension factory options.
 
 ## How it works
 
