@@ -50,7 +50,8 @@
   ],
   "files": [
     "src",
-    "README_zh.md"
+    "README_zh.md",
+    "assets/benchmark-comparison.svg"
   ],
   "publishConfig": {
     "access": "public",

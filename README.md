@@ -66,6 +66,8 @@ Expand the native conversation card with `Ctrl+O` to inspect omitted bytes, imag
 
 GPT-6.2 Sol, 2026-11-27: a fresh on/off pair using the same four prompts, eight synthetic document images, exact-match scoring, and separate sessions with native compaction disabled. Both trials completed.
 
+![Latest GPT-6.2 Sol comparison: request size, image blocks, tokens, and estimated catalog cost](assets/benchmark-comparison.svg)
+
 | Metric | Without extension | With extension | Change |
 |---|---:|---:|---:|
 | Request JSON | 18.47 MiB | 6.90 MiB | −62.7% |
